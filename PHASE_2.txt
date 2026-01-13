@@ -1,0 +1,45 @@
+# ====================================================================
+# PHASE 2: INFRASTRUCTURE, PERSISTENCE & STATIC MAPPING
+# ====================================================================
+# Reference: @10.txt, @.cursorrules, @CURSOR_INSTRUCTIONS.txt
+
+[GOAL]
+Implement the persistence layer without violating Domain Purity. 
+Create the bridge between Pure Domain Entities and SQLAlchemy Models.
+
+[TASK 1: DATABASE MODELS]
+- Path: core/data/models/order_model.py
+- Requirements:
+    - Define SQLAlchemy Base.
+    - Create 'orders' table (mapped to Order Entity).
+    - Create 'order_items' table (mapped to OrderItem Entity).
+    - Use proper Foreign Keys and relationships.
+
+[TASK 2: PROFESSIONAL STATIC MAPPERS]
+- Path: core/data/mappers.py
+- Strict Rules:
+    - Use classes with @staticmethod ONLY (e.g., OrderMapper).
+    - Functions: 
+        - to_domain(db_model) -> Entity
+        - to_persistence(entity) -> db_model
+    - Mapping Logic:
+        - Handle nested collections (map list of OrderItem models to list of entities).
+        - Map Value Objects: Money(Decimal, Currency), ExecutionID(UUID), OrderNumber(String).
+- Logic: The Mapper is the ONLY place where domain and data layers meet.
+
+[TASK 3: REPOSITORY IMPLEMENTATION]
+- Path: core/data/repositories/order_repository.py
+- Action: Implement the ABC defined in core/domain/repositories/.
+- Tech: Use SQLAlchemy 2.0 AsyncSession.
+- Methods: save(), find_by_id(), find_all(), exists().
+
+[TASK 4: UNIT OF WORK (UoW)]
+- Path: core/data/uow.py
+- Action: Create an Async Unit of Work to manage transactions and session lifecycle.
+- Tracing: Ensure ExecutionID is accessible/logged during DB sessions.
+
+[QUALITY GATE]
+1. Run: ./scripts/run_architecture_check.sh
+2. Result: MUST BE "Architecture violations: 0".
+3. Verify: No 'core.data' imports found in 'core.domain'.
+# ====================================================================

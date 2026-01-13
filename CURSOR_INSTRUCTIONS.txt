@@ -1,0 +1,43 @@
+# ====================================================================
+# KONOZY AI: MASTER EXECUTION INSTRUCTIONS (STRICT VERSION)
+# ====================================================================
+
+[GOAL]
+Build a rock-solid DDD/Hexagonal infrastructure with Zero Architectural Leakage.
+
+[PHASE 2: THE INTERFACE & ADAPTER BRIDGE]
+--------------------------------------------------------------------
+STEP 1: REPOSITORY INTERFACES (Domain Layer)
+- Location: 'core/domain/repositories/'
+- Action: Define Abstract Base Classes (ABCs) for entities (Order, User, etc.).
+- Signature Rule: Use ONLY Domain Entities. No SQL types or Pydantic models.
+
+STEP 2: DATA IMPLEMENTATION (Infrastructure Layer)
+- Location: 'core/data/repositories/'
+- Action: Implement ABCs using SQLAlchemy 2.0 AsyncSession.
+- Isolation: All SQL queries, filters, and sessions stay strictly in this layer.
+
+STEP 3: MAPPING LAYER (Infrastructure Layer)
+- Location: 'core/data/mappers.py'
+- Technical Specs (The 5 Purity Rules):
+    1. Structure: Use classes (e.g., 'OrderMapper') with @staticmethod ONLY.
+    2. Conversion: bi-directional (to_domain <-> to_persistence).
+    3. Recursion: Handle nested lists (OrderItems) by calling respective mappers.
+    4. Value Objects: Convert 'Money' to Decimal and 'ExecutionID' to String for DB; reverse for Domain.
+    5. No-Leakage: The Domain Layer must NEVER know these mappers exist.
+
+STEP 4: UNIT OF WORK (UoW)
+- Location: 'core/data/uow.py'
+- Action: Implement UoW pattern to orchestrate atomic transactions.
+- Observability: Inject and log 'ExecutionID' in every commit/rollback.
+
+--------------------------------------------------------------------
+[QUALITY GATE: THE FINAL STAGE]
+--------------------------------------------------------------------
+Before reporting task completion, you MUST verify:
+1. Architecture: Run './scripts/run_architecture_check.sh' (Must be 0 violations).
+2. Type Safety: Run 'mypy core/' (Strict check).
+3. Domain Purity: No SQLAlchemy/Pydantic imports in 'core/domain/'.
+4. Tracing: All repository methods must support 'ExecutionID' propagation.
+
+"Execute these steps sequentially. If Pillar 1 (Domain Purity) is broken at any point, STOP and REFACTOR before proceeding."

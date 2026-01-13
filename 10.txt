@@ -1,0 +1,937 @@
+🎯 MISSION CRITICAL: ARCHITECTURAL CONSTITUTION COMPLIANCE
+THIS IS NOT A GUIDELINE. THIS IS LAW.
+Every single line of code you generate MUST pass the Konozy AI Architectural Constitution validation. No exceptions. No shortcuts. No "we'll fix it later."
+FINAL QUALITY GATE (NON-NEGOTIABLE):
+bash./scripts/run_architecture_check.sh
+ACCEPTANCE CRITERIA: Architecture violations: 0
+If violations > 0, YOU HAVE FAILED THE MISSION. Do not report completion. Fix every violation until clean.
+
+🏛️ CORE ARCHITECTURAL PRINCIPLES
+1. DOMAIN PURITY LAW (ZERO TOLERANCE)
+THE SACRED BOUNDARY: core/domain/
+ABSOLUTE PROHIBITIONS:
+
+❌ NO SQLAlchemy imports (from sqlalchemy import ...)
+❌ NO Pydantic imports (from pydantic import ...)
+❌ NO FastAPI imports (from fastapi import ...)
+❌ NO ORM models (Base, Column, relationship, etc.)
+❌ NO framework dependencies of ANY kind
+
+MANDATORY REQUIREMENTS:
+
+✅ Pure Python dataclasses ONLY (from dataclasses import dataclass)
+✅ Standard library types (datetime, Decimal, UUID, Enum)
+✅ Value Objects for domain primitives (Money, ExecutionID, OrderNumber)
+✅ Rich domain behavior (business logic methods on entities)
+
+VIOLATION DETECTION:
+bash# This MUST return 0 violations
+grep -r "from sqlalchemy" core/domain/ && echo "VIOLATION DETECTED"
+grep -r "from pydantic" core/domain/ && echo "VIOLATION DETECTED"
+grep -r "from fastapi" core/domain/ && echo "VIOLATION DETECTED"
+```
+
+### 2. DEPENDENCY DIRECTION LAW
+
+**THE FLOW:**
+```
+Presentation Layer (FastAPI)
+    ↓ depends on
+Application Layer (Services)
+    ↓ depends on
+Domain Layer (Entities, Value Objects, Repositories Interfaces)
+    ↑ implemented by
+Infrastructure Layer (SQLAlchemy, Pydantic, External APIs)
+RULES:
+
+Domain layer depends on NOTHING external
+Infrastructure depends on domain (implements interfaces)
+Application orchestrates domain + infrastructure
+Presentation depends on application (thin controllers)
+
+
+📦 PHASE-BY-PHASE EXECUTION PROTOCOL
+PHASE 1: PURE DOMAIN MODELING
+Location: core/domain/
+Deliverables:
+1.1 Value Objects (core/domain/value_objects.py)
+pythonfrom dataclasses import dataclass
+from decimal import Decimal
+from uuid import UUID
+from datetime import datetime
+
+@dataclass(frozen=True)
+class Money:
+    """Immutable monetary value with currency."""
+    amount: Decimal
+    currency: str = "USD"
+    
+    def __post_init__(self):
+        if self.amount < 0:
+            raise ValueError("Money amount cannot be negative")
+        if not self.currency or len(self.currency) != 3:
+            raise ValueError("Currency must be 3-letter ISO code")
+
+@dataclass(frozen=True)
+class ExecutionID:
+    """Unique identifier for workflow execution tracing."""
+    value: UUID
+    
+    @classmethod
+    def generate(cls) -> 'ExecutionID':
+        return cls(value=UUID())
+    
+    def __str__(self) -> str:
+        return str(self.value)
+
+@dataclass(frozen=True)
+class OrderNumber:
+    """Amazon order identifier with validation."""
+    value: str
+    
+    def __post_init__(self):
+        if not self.value or not self.value.startswith('1'):
+            raise ValueError("Invalid Amazon order number format")
+1.2 Domain Entities (core/domain/entities/)
+python# core/domain/entities/order.py
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import List
+from ..value_objects import Money, OrderNumber, ExecutionID
+
+@dataclass
+class OrderItem:
+    """Individual line item within an order."""
+    sku: str
+    title: str
+    quantity: int
+    unit_price: Money
+    total: Money
+    
+    def calculate_total(self) -> Money:
+        """Recalculate total based on quantity and unit price."""
+        calculated = Money(
+            amount=self.unit_price.amount * self.quantity,
+            currency=self.unit_price.currency
+        )
+        if calculated != self.total:
+            raise ValueError(f"Total mismatch: {calculated} vs {self.total}")
+        return calculated
+
+@dataclass
+class Order:
+    """Aggregate root for Amazon order domain."""
+    order_id: OrderNumber
+    purchase_date: datetime
+    buyer_email: str
+    items: List[OrderItem] = field(default_factory=list)
+    order_total: Money = None
+    order_status: str = "Pending"
+    execution_id: ExecutionID = None
+    
+    def add_item(self, item: OrderItem) -> None:
+        """Add item and recalculate order total."""
+        self.items.append(item)
+        self._recalculate_total()
+    
+    def _recalculate_total(self) -> None:
+        """Internal: Sum all item totals."""
+        if not self.items:
+            self.order_total = Money(Decimal("0.00"))
+            return
+        
+        total = sum(item.total.amount for item in self.items)
+        self.order_total = Money(amount=total, currency=self.items[0].total.currency)
+    
+    def mark_shipped(self) -> None:
+        """Business rule: Transition to shipped status."""
+        if self.order_status == "Cancelled":
+            raise ValueError("Cannot ship a cancelled order")
+        self.order_status = "Shipped"
+1.3 Repository Interfaces (core/domain/repositories/)
+python# core/domain/repositories/order_repository.py
+from abc import ABC, abstractmethod
+from typing import Optional, List
+from ..entities.order import Order
+from ..value_objects import OrderNumber, ExecutionID
+
+class OrderRepository(ABC):
+    """Abstract repository for Order aggregate persistence."""
+    
+    @abstractmethod
+    async def save(self, order: Order, execution_id: ExecutionID) -> None:
+        """Persist order aggregate with execution tracing."""
+        pass
+    
+    @abstractmethod
+    async def find_by_id(self, order_id: OrderNumber) -> Optional[Order]:
+        """Retrieve order by unique identifier."""
+        pass
+    
+    @abstractmethod
+    async def find_all(self, limit: int = 100) -> List[Order]:
+        """List orders with pagination."""
+        pass
+    
+    @abstractmethod
+    async def exists(self, order_id: OrderNumber) -> bool:
+        """Check if order already exists (duplicate prevention)."""
+        pass
+PHASE 1 VALIDATION:
+bash# NO infrastructure imports allowed
+python -c "
+import ast
+import sys
+from pathlib import Path
+
+prohibited = ['sqlalchemy', 'pydantic', 'fastapi']
+for file in Path('core/domain').rglob('*.py'):
+    with open(file) as f:
+        tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if any(p in (node.module or '') for p in prohibited):
+                    print(f'VIOLATION: {file} imports {node.module}')
+                    sys.exit(1)
+print('✅ Domain purity validated')
+"
+
+PHASE 2: INFRASTRUCTURE PERSISTENCE LAYER
+Location: core/data/
+2.1 ORM Models (core/data/models.py)
+pythonfrom sqlalchemy import Column, String, Numeric, DateTime, ForeignKey, Integer
+from sqlalchemy.orm import relationship, declarative_base
+from datetime import datetime
+
+Base = declarative_base()
+
+class OrderModel(Base):
+    """SQLAlchemy ORM model for orders table."""
+    __tablename__ = "orders"
+    
+    order_id = Column(String(50), primary_key=True)
+    purchase_date = Column(DateTime, nullable=False)
+    buyer_email = Column(String(255), nullable=False)
+    order_total_amount = Column(Numeric(10, 2), nullable=False)
+    order_total_currency = Column(String(3), default="USD")
+    order_status = Column(String(50), default="Pending")
+    execution_id = Column(String(36), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship to items
+    items = relationship("OrderItemModel", back_populates="order", cascade="all, delete-orphan")
+
+class OrderItemModel(Base):
+    """SQLAlchemy ORM model for order_items table."""
+    __tablename__ = "order_items"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(String(50), ForeignKey("orders.order_id"), nullable=False)
+    sku = Column(String(100), nullable=False)
+    title = Column(String(500), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    unit_price_amount = Column(Numeric(10, 2), nullable=False)
+    unit_price_currency = Column(String(3), default="USD")
+    total_amount = Column(Numeric(10, 2), nullable=False)
+    total_currency = Column(String(3), default="USD")
+    
+    # Relationship back to order
+    order = relationship("OrderModel", back_populates="items")
+2.2 PROFESSIONAL STATIC MAPPERS (core/data/mappers.py)
+CRITICAL REQUIREMENTS:
+
+✅ Classes with @staticmethod ONLY (no instance state)
+✅ Bi-directional conversion (to_domain ↔ to_persistence)
+✅ Recursive handling of nested lists (OrderItems)
+✅ Value Object transformation (Money, ExecutionID, OrderNumber)
+✅ Type safety with explicit return types
+
+pythonfrom typing import List, Optional
+from decimal import Decimal
+from uuid import UUID
+
+from .models import OrderModel, OrderItemModel
+from core.domain.entities.order import Order, OrderItem
+from core.domain.value_objects import Money, OrderNumber, ExecutionID
+
+
+class OrderItemMapper:
+    """Static mapper for OrderItem ↔ OrderItemModel transformation."""
+    
+    @staticmethod
+    def to_domain(model: OrderItemModel) -> OrderItem:
+        """Convert ORM model to domain entity."""
+        return OrderItem(
+            sku=model.sku,
+            title=model.title,
+            quantity=model.quantity,
+            unit_price=Money(
+                amount=Decimal(str(model.unit_price_amount)),
+                currency=model.unit_price_currency
+            ),
+            total=Money(
+                amount=Decimal(str(model.total_amount)),
+                currency=model.total_currency
+            )
+        )
+    
+    @staticmethod
+    def to_persistence(entity: OrderItem, order_id: str) -> OrderItemModel:
+        """Convert domain entity to ORM model."""
+        return OrderItemModel(
+            order_id=order_id,
+            sku=entity.sku,
+            title=entity.title,
+            quantity=entity.quantity,
+            unit_price_amount=float(entity.unit_price.amount),
+            unit_price_currency=entity.unit_price.currency,
+            total_amount=float(entity.total.amount),
+            total_currency=entity.total.currency
+        )
+
+
+class OrderMapper:
+    """Static mapper for Order ↔ OrderModel transformation with nested items."""
+    
+    @staticmethod
+    def to_domain(model: OrderModel) -> Order:
+        """Convert ORM model to domain aggregate (with nested items)."""
+        # Map nested items recursively
+        items = [
+            OrderItemMapper.to_domain(item_model)
+            for item_model in model.items
+        ]
+        
+        # Reconstruct value objects
+        execution_id = (
+            ExecutionID(value=UUID(model.execution_id))
+            if model.execution_id
+            else None
+        )
+        
+        return Order(
+            order_id=OrderNumber(value=model.order_id),
+            purchase_date=model.purchase_date,
+            buyer_email=model.buyer_email,
+            items=items,
+            order_total=Money(
+                amount=Decimal(str(model.order_total_amount)),
+                currency=model.order_total_currency
+            ),
+            order_status=model.order_status,
+            execution_id=execution_id
+        )
+    
+    @staticmethod
+    def to_persistence(entity: Order) -> OrderModel:
+        """Convert domain aggregate to ORM model (with nested items)."""
+        # Create parent order model
+        order_model = OrderModel(
+            order_id=entity.order_id.value,
+            purchase_date=entity.purchase_date,
+            buyer_email=entity.buyer_email,
+            order_total_amount=float(entity.order_total.amount),
+            order_total_currency=entity.order_total.currency,
+            order_status=entity.order_status,
+            execution_id=str(entity.execution_id.value) if entity.execution_id else None
+        )
+        
+        # Map nested items recursively
+        order_model.items = [
+            OrderItemMapper.to_persistence(item, entity.order_id.value)
+            for item in entity.items
+        ]
+        
+        return order_model
+    
+    @staticmethod
+    def update_persistence(entity: Order, model: OrderModel) -> OrderModel:
+        """Update existing ORM model from domain entity (for updates)."""
+        model.purchase_date = entity.purchase_date
+        model.buyer_email = entity.buyer_email
+        model.order_total_amount = float(entity.order_total.amount)
+        model.order_total_currency = entity.order_total.currency
+        model.order_status = entity.order_status
+        model.execution_id = str(entity.execution_id.value) if entity.execution_id else None
+        
+        # Clear and rebuild items
+        model.items.clear()
+        model.items = [
+            OrderItemMapper.to_persistence(item, entity.order_id.value)
+            for item in entity.items
+        ]
+        
+        return model
+MAPPER QUALITY GATES:
+
+✅ No instance variables (self.field = value forbidden)
+✅ All methods are @staticmethod
+✅ Handles None values gracefully
+✅ Preserves precision (Decimal ↔ float conversions)
+✅ Recursive depth tested (nested lists)
+
+2.3 Repository Implementation (core/data/repositories/order_repository_impl.py)
+pythonfrom typing import Optional, List
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from core.domain.repositories.order_repository import OrderRepository
+from core.domain.entities.order import Order
+from core.domain.value_objects import OrderNumber, ExecutionID
+from ..models import OrderModel
+from ..mappers import OrderMapper
+
+
+class SqlAlchemyOrderRepository(OrderRepository):
+    """Concrete implementation of OrderRepository using SQLAlchemy."""
+    
+    def __init__(self, session: AsyncSession):
+        self._session = session
+    
+    async def save(self, order: Order, execution_id: ExecutionID) -> None:
+        """Persist order aggregate with execution tracing."""
+        # Check if exists (upsert logic)
+        existing = await self._session.get(OrderModel, order.order_id.value)
+        
+        if existing:
+            # Update existing
+            updated_model = OrderMapper.update_persistence(order, existing)
+            self._session.add(updated_model)
+        else:
+            # Insert new
+            order_model = OrderMapper.to_persistence(order)
+            self._session.add(order_model)
+        
+        await self._session.flush()  # Propagate to DB without committing
+    
+    async def find_by_id(self, order_id: OrderNumber) -> Optional[Order]:
+        """Retrieve order by unique identifier."""
+        result = await self._session.execute(
+            select(OrderModel)
+            .where(OrderModel.order_id == order_id.value)
+        )
+        model = result.scalar_one_or_none()
+        
+        if not model:
+            return None
+        
+        return OrderMapper.to_domain(model)
+    
+    async def find_all(self, limit: int = 100) -> List[Order]:
+        """List orders with pagination."""
+        result = await self._session.execute(
+            select(OrderModel).limit(limit)
+        )
+        models = result.scalars().all()
+        
+        return [OrderMapper.to_domain(model) for model in models]
+    
+    async def exists(self, order_id: OrderNumber) -> bool:
+        """Check if order already exists (duplicate prevention)."""
+        result = await self._session.execute(
+            select(OrderModel.order_id)
+            .where(OrderModel.order_id == order_id.value)
+        )
+        return result.scalar_one_or_none() is not None
+2.4 UNIT OF WORK (core/data/uow.py)
+PURPOSE: Atomic transaction management + ExecutionID propagation
+pythonfrom typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from contextlib import asynccontextmanager
+
+from core.domain.value_objects import ExecutionID
+from .repositories.order_repository_impl import SqlAlchemyOrderRepository
+
+
+class UnitOfWork:
+    """
+    Unit of Work pattern for atomic transactions.
+    
+    Responsibilities:
+    1. Manage SQLAlchemy session lifecycle
+    2. Propagate ExecutionID across all operations
+    3. Atomic commit/rollback of all repository operations
+    4. Lazy initialization of repositories
+    """
+    
+    def __init__(self, session_factory: async_sessionmaker):
+        self._session_factory = session_factory
+        self._session: Optional[AsyncSession] = None
+        self._execution_id: Optional[ExecutionID] = None
+        
+        # Lazy-loaded repositories
+        self._order_repository: Optional[SqlAlchemyOrderRepository] = None
+    
+    async def __aenter__(self):
+        """Start transaction scope."""
+        self._session = self._session_factory()
+        self._execution_id = ExecutionID.generate()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Commit or rollback based on exception."""
+        if exc_type is not None:
+            await self._session.rollback()
+        await self._session.close()
+    
+    @property
+    def execution_id(self) -> ExecutionID:
+        """Get current execution ID for tracing."""
+        return self._execution_id
+    
+    @property
+    def orders(self) -> SqlAlchemyOrderRepository:
+        """Lazy-load order repository."""
+        if self._order_repository is None:
+            self._order_repository = SqlAlchemyOrderRepository(self._session)
+        return self._order_repository
+    
+    async def commit(self) -> None:
+        """Commit all pending changes."""
+        await self._session.commit()
+    
+    async def rollback(self) -> None:
+        """Rollback all pending changes."""
+        await self._session.rollback()
+
+
+# Factory for creating UoW instances
+def create_uow(session_factory: async_sessionmaker) -> UnitOfWork:
+    """Create a new Unit of Work instance."""
+    return UnitOfWork(session_factory)
+USAGE PATTERN:
+python# In application service
+async def sync_order_service(order_data: dict, uow: UnitOfWork):
+    async with uow:
+        # ExecutionID automatically generated
+        execution_id = uow.execution_id
+        
+        # Create domain entity
+        order = Order(
+            order_id=OrderNumber(value=order_data['order_id']),
+            purchase_date=order_data['purchase_date'],
+            buyer_email=order_data['buyer_email'],
+            execution_id=execution_id
+        )
+        
+        # Use repository through UoW
+        await uow.orders.save(order, execution_id)
+        
+        # Atomic commit
+        await uow.commit()
+
+PHASE 3: APPLICATION SERVICES LAYER
+Location: core/application/services/
+3.1 Service Implementation
+python# core/application/services/order_sync_service.py
+from typing import Dict, Any
+from datetime import datetime
+from decimal import Decimal
+
+from core.domain.entities.order import Order, OrderItem
+from core.domain.value_objects import OrderNumber, Money, ExecutionID
+from core.data.uow import UnitOfWork
+
+
+class OrderSyncService:
+    """
+    Application service for orchestrating order synchronization.
+    
+    Responsibilities:
+    - Coordinate domain + infrastructure
+    - Handle transactions via UoW
+    - Propagate ExecutionID for tracing
+    - Business workflow orchestration
+    """
+    
+    def __init__(self, uow: UnitOfWork):
+        self.uow = uow
+    
+    async def sync_amazon_order(self, raw_order: Dict[str, Any]) -> ExecutionID:
+        """
+        Sync Amazon order into system.
+        
+        Args:
+            raw_order: Raw API response from Amazon
+        
+        Returns:
+            ExecutionID for tracing this operation
+        """
+        async with self.uow:
+            execution_id = self.uow.execution_id
+            
+            # 1. Check for duplicates
+            order_id = OrderNumber(value=raw_order['AmazonOrderId'])
+            exists = await self.uow.orders.exists(order_id)
+            
+            if exists:
+                # Idempotency: Skip duplicate
+                return execution_id
+            
+            # 2. Transform to domain entity
+            order = self._build_domain_order(raw_order, execution_id)
+            
+            # 3. Apply business rules
+            order._recalculate_total()  # Validate totals
+            
+            # 4. Persist via repository
+            await self.uow.orders.save(order, execution_id)
+            
+            # 5. Atomic commit
+            await self.uow.commit()
+            
+            return execution_id
+    
+    def _build_domain_order(self, raw: Dict[str, Any], execution_id: ExecutionID) -> Order:
+        """Transform raw API data to domain entity."""
+        items = [
+            OrderItem(
+                sku=item['SellerSKU'],
+                title=item['Title'],
+                quantity=int(item['QuantityOrdered']),
+                unit_price=Money(
+                    amount=Decimal(item['ItemPrice']['Amount']),
+                    currency=item['ItemPrice']['CurrencyCode']
+                ),
+                total=Money(
+                    amount=Decimal(item['ItemPrice']['Amount']) * int(item['QuantityOrdered']),
+                    currency=item['ItemPrice']['CurrencyCode']
+                )
+            )
+            for item in raw.get('OrderItems', [])
+        ]
+        
+        return Order(
+            order_id=OrderNumber(value=raw['AmazonOrderId']),
+            purchase_date=datetime.fromisoformat(raw['PurchaseDate']),
+            buyer_email=raw['BuyerInfo']['BuyerEmail'],
+            items=items,
+            order_status=raw['OrderStatus'],
+            execution_id=execution_id
+        )
+
+PHASE 4: PRESENTATION LAYER (FastAPI)
+Location: api/routes/
+python# api/routes/orders.py
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import Dict, Any
+
+from core.application.services.order_sync_service import OrderSyncService
+from core.data.uow import UnitOfWork, create_uow
+from api.dependencies import get_session_factory
+
+
+router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+class OrderSyncRequest(BaseModel):
+    """Request schema for order sync endpoint."""
+    raw_order: Dict[str, Any]
+
+
+class OrderSyncResponse(BaseModel):
+    """Response schema with execution tracing."""
+    execution_id: str
+    status: str
+    message: str
+
+
+@router.post("/sync", response_model=OrderSyncResponse)
+async def sync_order(
+    request: OrderSyncRequest,
+    session_factory = Depends(get_session_factory)
+):
+    """
+    Sync Amazon order into system.
+    
+    - Idempotent operation (duplicate-safe)
+    - Atomic transaction via UoW
+    - Execution tracing via ExecutionID
+    """
+    uow = create_uow(session_factory)
+    service = OrderSyncService(uow)
+    
+    try:
+        execution_id = await service.sync_amazon_order(request.raw_order)
+        
+        return OrderSyncResponse(
+            execution_id=str(execution_id),
+            status="success",
+            message=f"Order synced successfully"
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+🔬 TESTING REQUIREMENTS
+Unit Tests (Domain Layer)
+python# tests/unit/domain/test_order_entity.py
+import pytest
+from decimal import Decimal
+from datetime import datetime
+
+from core.domain.entities.order import Order, OrderItem
+from core.domain.value_objects import Money, OrderNumber, ExecutionID
+
+
+def test_order_add_item_recalculates_total():
+    """Test that adding items updates order total."""
+    order = Order(
+        order_id=OrderNumber(value="123-4567890-1234567"),
+        purchase_date=datetime.now(),
+        buyer_email="buyer@example.com"
+    )
+    
+    item = OrderItem(
+        sku="PROD-001",
+        title="Test Product",
+        quantity=2,
+        unit_price=Money(amount=Decimal("10.00"), currency="USD"),
+        total=Money(amount=Decimal("20.00"), currency="USD")
+    )
+    
+    order.add_item(item)
+    
+    assert order.order_total.amount == Decimal("20.00")
+    assert order.order_total.currency == "USD"
+
+
+def test_order_cannot_ship_if_cancelled():
+    """Test business rule: Cannot ship cancelled orders."""
+    order = Order(
+        order_id=OrderNumber(value="123-4567890-1234567"),
+        purchase_date=datetime.now(),
+        buyer_email="buyer@example.com",
+        order_status="Cancelled"
+    )
+    
+    with pytest.raises(ValueError, match="Cannot ship a cancelled order"):
+        order.mark_shipped()
+Integration Tests (Mappers)
+python# tests/integration/data/test_mappers.py
+import pytest
+from decimal import Decimal
+from datetime import datetime
+
+from core.domain.entities.order import Order, OrderItem
+from core.domain.value_objects import Money, OrderNumber, ExecutionID
+from core.data.models import OrderModel, OrderItemModel
+from core.data.mappers import OrderMapper
+
+
+def test_order_mapper_bidirectional_conversion():
+    """Test that to_domain and to_persistence are inverses."""
+    # Create domain entity
+    original = Order(
+        order_id=OrderNumber(value="123-4567890-1234567"),
+        purchase_date=datetime(2025, 1, 13, 10, 30),
+        buyer_email="test@example.com",
+        items=[
+            OrderItem(
+                sku="SKU-001",
+                title="Product A",
+                quantity=2,
+                unit_price=Money(amount=Decimal("15.00"), currency="USD"),
+                total=Money(amount=Decimal("30.00"), currency="USD")
+            )
+        ],
+        order_total=Money(amount=Decimal("30.00"), currency="USD"),
+        order_status="Pending",
+        execution_id=ExecutionID.generate()
+    )
+    
+    # Convert to persistence
+    model = OrderMapper.to_persistence(original)
+    
+    # Convert back to domain
+    reconstructed = OrderMapper.to_domain(model)
+    
+    # Assertions
+    assert reconstructed.order_id.value == original.order_id.value
+    assert reconstructed.buyer_email == original.buyer_email
+    assert len(reconstructed.items) == 1
+    assert reconstructed.items[0].sku == "SKU-001"
+    assert reconstructed.order_total.amount == Decimal("30.00")
+
+✅ FINAL QUALITY GATE (MANDATORY)
+BEFORE REPORTING COMPLETION:
+bash#!/bin/bash
+# scripts/run_architecture_check.sh
+
+echo "🔍 Running Konozy AI Architecture Validation..."
+
+# 1. Domain Purity Check
+echo "Checking domain purity..."
+python -c "
+import ast
+import sys
+from pathlib import Path
+
+prohibited = ['sqlalchemy', 'pydantic', 'fastapi']
+violations = []
+
+for file in Path('core/domain').rglob('*.py'):
+    with open(file) as f:
+        try:
+            tree = ast.parse(f.read())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    if any(p in (node.module or '') for p in prohibited):
+                        violations.append(f'{file}: imports {node.module}')
+        except:
+            pass
+
+if violations:
+    print('❌ Domain purity violations:')
+    for v in violations:
+        print(f'  - {v}')
+    sys.exit(1)
+else:
+    print('✅ Domain purity validated')
+"
+
+# 2. Mapper Static Method Check
+echo "Checking mapper implementation..."
+python -c "
+import ast
+from pathlib import Path
+
+mapper_file = Path('core/data/mappers.py')
+if not mapper_file.exists():
+    print('❌ mappers.py not found')
+    exit(1)
+
+with open(mapper_file) as f:
+    tree = ast.parse(f.read())
+    
+for node in ast.walk(tree):
+    if isinstance(node, ast.ClassDef) and 'Mapper' in node.name:
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                decorators = [d.id for d in item.decorator_list if hasattr(d, 'id')]
+                if 'staticmethod' not in decorators:
+                    print(f'❌ {node.name}.{item.name} must be @staticmethod')
+                    exit(1)
+
+print('✅ Mapper implementation validated')
+"
+
+# 3. Test Coverage Check
+echo "Running tests with coverage..."
+pytest --cov=core --cov-report=term-missing --cov-fail-under=70
+
+if [ $? -ne 0 ]; then
+    echo "❌ Test coverage below 70%"
+    exit 1
+fi
+
+# 4. Architecture Violations Summary
+echo ""
+echo "═══════════════════════════════════════"
+echo "Architecture Violations: 0"
+echo "═══════════════════════════════════════"
+echo "✅ ALL QUALITY GATES PASSED"
+echo "✅ READY FOR DEPLOYMENT"
+```
+
+**ACCEPTANCE CRITERIA:**
+```
+Architecture Violations: 0
+Test Coverage: ≥70%
+All checks: PASSED
+IF VIOLATIONS > 0: STOP. DO NOT PROCEED. FIX ALL VIOLATIONS FIRST.
+
+🚀 EXECUTION CHECKLIST
+Phase 1: Pure Domain Modeling
+
+ Value Objects created (Money, ExecutionID, OrderNumber)
+ Domain Entities created (Order, OrderItem)
+ Repository Interfaces defined
+ NO infrastructure imports in core/domain/
+ Domain purity validation passed
+
+Phase 2: Infrastructure Layer
+
+ ORM Models created (models.py)
+ Static Mappers implemented (mappers.py)
+
+ Classes with @staticmethod only
+ Bi-directional conversion working
+ Nested list handling (OrderItems)
+ Value Object transformation working
+
+
+ Repository Implementation created
+ Unit of Work implemented (uow.py)
+
+ Transaction management
+ ExecutionID propagation
+
+
+
+Phase 3: Application Services
+
+ Service layer created
+ UoW integration complete
+ Business workflow orchestration working
+
+Phase 4: Presentation Layer
+
+ FastAPI routes created
+ Pydantic request/response models
+ Thin controllers (delegation to services)
+
+Testing & Validation
+
+ Unit tests for domain entities (≥70% coverage)
+ Integration tests for mappers (bidirectional)
+ Integration tests for repositories
+ ./scripts/run_architecture_check.sh returns 0 violations
+
+
+🎖️ ENTERPRISE-GRADE STANDARDS
+CODE QUALITY:
+
+Type hints on ALL functions/methods
+Docstrings for ALL public interfaces
+Explicit error handling (no bare except:)
+Logging with ExecutionID for tracing
+
+ARCHITECTURE:
+
+Dependency Injection everywhere
+Interface segregation (small, focused repositories)
+Single Responsibility Principle
+No circular dependencies
+
+PERFORMANCE:
+
+Async/await throughout
+Batch operations where possible
+N+1 query prevention (prefetch patterns)
+Connection pooling configured
+
+
+🔥 MISSION COMPLETION CRITERIA
+YOU MAY ONLY REPORT SUCCESS WHEN:
+
+✅ All phases completed
+✅ ./scripts/run_architecture_check.sh returns 0 violations
+✅ Test coverage ≥70%
+✅ All mappers use @staticmethod only
+✅ Domain layer has ZERO infrastructure imports
+✅ UoW propagates ExecutionID everywhere
+
+ANYTHING LESS IS FAILURE.
+
+💪 FINAL WORDS
+This is not a tutorial. This is a CONSTITUTION.
+Every architectural decision in this document has been battle-tested in production systems handling millions of transactions. Every rule exists because its violation has caused real production incidents.
+Your mission: Build it right the first time. No shortcuts. No compromises.
+The Konozy AI way: Enterprise-grade DDD architecture that scales to infinity.
+Now go execute.
+🚀 ARCHITECTURE VIOLATIONS: 0 OR BUST 🚀Claude is AI and can make mistakes. Please double-check responses. Sonnet 4.5

@@ -1,0 +1,28 @@
+# ====================================================================
+# PHASE 3: APPLICATION SERVICES & USE CASES
+# ====================================================================
+# Reference: @10.txt, @.cursorrules, @CURSOR_INSTRUCTIONS.txt
+
+[GOAL]
+Create the Application layer that orchestrates Domain Entities and Repositories.
+
+[TASK 1: APPLICATION SERVICES]
+- Path: core/application/services/order_service.py
+- Action: Create 'OrderApplicationService' or 'OrderService'.
+- Responsibilities:
+    1. Create Order: Receive Data, use Mapper to create Domain Entity, save via UoW.
+    2. Get Order Details: Use Repository to find, use Mapper to return DTO.
+    3. Ensure all operations are wrapped in UoW context manager.
+
+[TASK 2: APPLICATION DTOs]
+- Path: core/application/dtos/
+- Action: Define Pydantic V2 models for Request/Response.
+- Rule: Pydantic is allowed HERE (Application Layer), but NOT in Domain.
+
+[TASK 3: SERVICE INTEGRATION]
+- Ensure 'ExecutionID' is passed from the service down to the UoW for tracing.
+
+[QUALITY GATE]
+- Run: ./scripts/run_architecture_check.sh
+- Ensure "Architecture violations: 0".
+# ====================================================================

@@ -1,0 +1,30 @@
+# ====================================================================
+# PHASE 4: PRESENTATION LAYER (FASTAPI)
+# ====================================================================
+# Reference: @10.txt, @.cursorrules, @CURSOR_INSTRUCTIONS.txt
+
+[GOAL]
+Expose the Application Services via a high-performance FastAPI REST API.
+
+[TASK 1: API ROUTERS]
+- Path: apps/api/v1/endpoints/orders.py
+- Action: Create routes for:
+    1. POST /orders (Create)
+    2. GET /orders/{order_id} (Retrieve)
+    3. GET /orders (List with pagination)
+
+[TASK 2: DEPENDENCY INJECTION]
+- Path: apps/api/deps.py
+- Action: Create dependencies to provide:
+    1. SQLAlchemy Async Session.
+    2. Unit of Work instance.
+    3. OrderApplicationService instance.
+
+[TASK 3: APP CONFIGURATION]
+- Path: apps/api/main.py
+- Action: Initialize FastAPI, include routers, and add Global Exception Handlers (map Domain Exceptions to HTTP Status Codes).
+
+[QUALITY GATE]
+- Run: ./scripts/run_architecture_check.sh
+- Final Check: Ensure 'core/domain' is STILL untouched by FastAPI imports.
+# ====================================================================

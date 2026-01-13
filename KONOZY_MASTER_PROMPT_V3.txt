@@ -1,0 +1,27 @@
+🎯 MISSION CRITICAL: ARCHITECTURAL CONSTITUTION COMPLIANCE
+==========================================================
+THIS IS NOT A GUIDELINE. THIS IS LAW.
+Every line of code MUST pass the Konozy AI Architectural Constitution.
+
+[PHASE 1: THE PURE DOMAIN]
+- Location: core/domain/
+- Task: Define Entities & Value Objects (Order, Money, ExecutionID).
+- Purity: ZERO SQLAlchemy, ZERO Pydantic, ZERO FastAPI.
+- Check: 'grep -r "sqlalchemy" core/domain/' must return NOTHING.
+
+[PHASE 2: INFRASTRUCTURE & MAPPING]
+- Task 1: Repository Interfaces (ABCs) in core/domain/repositories/.
+- Task 2: Static Mappers in core/data/mappers.py.
+    * Rule: @staticmethod only.
+    * Rule: Bidirectional (to_domain <-> to_persistence).
+    * Rule: Recursive mapping for nested collections.
+- Task 3: Repository Implementation in core/data/repositories/ using SQLAlchemy 2.0.
+- Task 4: Unit of Work (UoW) in core/data/uow.py.
+
+[PHASE 3: QUALITY CONTROL]
+- Mandatory Execution: ./scripts/run_architecture_check.sh
+- Failure Condition: If violations > 0, REFACTOR IMMEDIATELY.
+- Final Step: 'mypy core/' must be 100% clean.
+
+"Build it right the first time. No shortcuts. No compromises."
+==========================================================

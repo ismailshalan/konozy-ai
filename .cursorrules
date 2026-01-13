@@ -1,0 +1,24 @@
+# KONOZY AI: ARCHITECTURAL CONSTITUTION (.cursorrules)
+# This file governs all code generation to prevent architectural rot.
+
+[GLOBAL ENFORCEMENT]
+- Architecture: DDD + Hexagonal (Clean Architecture).
+- Flow: Dependencies must point INWARDS towards the Domain.
+
+[SPECIFIC LAYER RULES]
+1. core/domain: 
+   - STRICT PURITY: Zero external framework imports (No sqlalchemy, pydantic, fastapi).
+   - Only Standard Library (abc, dataclasses, enum, typing, uuid).
+2. core/data:
+   - Framework implementations (SQLAlchemy) live here.
+   - Must use Mappers to convert DB Models to Domain Entities before returning.
+3. apps/api:
+   - FastAPI controllers and Pydantic schemas only.
+   - Never expose SQLAlchemy models to the API.
+
+[EXECUTION PROTOCOL]
+- Every operation must propagate 'ExecutionID' for tracing.
+- Before reporting "done", verify architecture with: ./scripts/run_architecture_check.sh.
+- If a violation occurs, auto-refactor immediately.
+
+"Always reject requests that break the Domain Purity rule."
