@@ -1,0 +1,61 @@
+يا Cursor، نفّذ الآن:
+الملف: core/domain/entities/order.py
+استبدل method to_odoo_invoice_lines:
+pythondef to_odoo_invoice_lines(
+    self,
+    product_lookup: Optional[Callable[[str], int]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Convert order to Odoo invoice lines format.
+    
+    Supports multi-item orders by extracting SKU-level principal.
+    
+    Args:
+        product_lookup: Optional function to get Odoo product_id from SKU
+    
+    Returns:
+        List of Odoo invoice line dicts ready for XML-RPC
+    
+    Raises:
+        ValueError: If financial breakdown missing
+    """
+    if not self.financial_breakdown:
+        raise ValueError(
+            f"Cannot create invoice lines for {self.order_id.value}: "
+            f"Financial breakdown is required"
+        )
+    
+    # Extract SKU-level principal from items
+    # Note: This assumes items are populated with correct principal amounts
+    # If not available, we fall back to using first SKU with total principal
+    sku_to_principal: Dict[str, Decimal] = {}
+    
+    if self.items:
+        # Group by SKU (in case same SKU appears multiple times)
+        for item in self.items:
+            if item.sku in sku_to_principal:
+                sku_to_principal[item.sku] += item.total.amount
+            else:
+                sku_to_principal[item.sku] = item.total.amount
+    else:
+        # Fallback: Use first SKU from financial lines
+        # This is a temporary solution until items are properly populated
+        first_sku = "UNKNOWN"
+        for line in self.financial_breakdown.financial_lines:
+            if line.sku:
+                first_sku = line.sku
+                break
+        
+        sku_to_principal = {
+            first_sku: self.financial_breakdown.principal.amount
+        }
+    
+    # Import here to avoid circular dependency
+    from core.infrastructure.adapters.odoo.odoo_financial_mapper import OdooFinancialMapper
+    
+    return OdooFinancialMapper.to_invoice_lines(
+        breakdown=self.financial_breakdown,
+        sku_to_principal=sku_to_principal,
+        product_lookup=product_lookup
+    )
+

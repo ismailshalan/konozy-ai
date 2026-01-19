@@ -1,0 +1,344 @@
+🚀 SESSION 3: Order Entity Integration - ابدأ الآن!
+
+🎯 الهدف
+ربط Order entity مع Event Store لتسجيل كل التغييرات تلقائياً
+المدة: 1 ساعة
+النتيجة: Complete Event Sourcing integration + End-to-end workflow
+
+📋 Session 3 Plan
+Step 3.1: Update Order Entity (20 min)
+Step 3.2: Update Use Case (20 min)
+Step 3.3: End-to-end Test (20 min)
+
+🔨 Step 3.1: Update Order Entity
+يا Cursor، نفّذ الآن:
+ملف: core/domain/entities/order.py (تحديث)
+أضف هذه التعديلات:
+python# في بداية الملف، أضف imports
+from typing import List
+from core.domain.events import (
+    OrderCreatedEvent,
+    FinancialsExtractedEvent,
+    OrderValidatedEvent,
+    OrderSavedEvent,
+    InvoiceCreatedEvent,
+    OrderSyncedEvent,
+    OrderFailedEvent,
+)
+
+
+class Order:
+    """
+    Order Entity with Event Sourcing.
+    
+    Records all state changes as domain events.
+    """
+    
+    def __init__(
+        self,
+        order_id: OrderNumber,
+        purchase_date: datetime,
+        buyer_email: str,
+        financial_breakdown: Optional[FinancialBreakdown] = None,
+        execution_id: Optional[ExecutionID] = None,
+        marketplace: str = "amazon",
+        order_status: str = "Pending",
+    ):
+        """Initialize order and record creation event."""
+        # Existing initialization
+        self.order_id = order_id
+        self.purchase_date = purchase_date
+        self.buyer_email = buyer_email
+        self.financial_breakdown = financial_breakdown
+        self.execution_id = execution_id or ExecutionID.generate()
+        self.marketplace = marketplace
+        self.order_status = order_status
+        self.error_message = None
+        
+        # NEW: Event storage
+        self._events: List[DomainEvent] = []
+        
+        # NEW: Record creation event
+        self._record_event(
+            OrderCreatedEvent(
+                order_id=self.order_id.value,
+                marketplace=self.marketplace,
+                buyer_email=self.buyer_email,
+                purchase_date=self.purchase_date.isoformat(),
+                execution_id=str(self.execution_id.value)
+            )
+        )
+        
+        # NEW: Record financials extracted event (if provided)
+        if self.financial_breakdown:
+            self._record_event(
+                FinancialsExtractedEvent(
+                    order_id=self.order_id.value,
+                    principal_amount=self.financial_breakdown.principal.amount,
+                    principal_currency=self.financial_breakdown.principal.currency,
+                    net_proceeds=self.financial_breakdown.net_proceeds.amount,
+                    financial_lines_count=len(self.financial_breakdown.financial_lines),
+                    execution_id=str(self.execution_id.value)
+                )
+            )
+    
+    def validate_financials(self) -> None:
+        """
+        Validate financial breakdown.
+        
+        Records validation event (success or failure).
+        """
+        if not self.financial_breakdown:
+            error_msg = "No financial breakdown to validate"
+            self._record_event(
+                OrderValidatedEvent(
+                    order_id=self.order_id.value,
+                    validation_passed=False,
+                    validation_message=error_msg,
+                    execution_id=str(self.execution_id.value)
+                )
+            )
+            raise ValueError(error_msg)
+        
+        try:
+            # Calculate net proceeds from principal and fees
+            calculated_net = self.financial_breakdown.principal.amount
+            
+            for line in self.financial_breakdown.financial_lines:
+                calculated_net += line.amount.amount
+            
+            # Verify balance equation: Principal + Fees = Net Proceeds
+            difference = abs(
+                calculated_net - self.financial_breakdown.net_proceeds.amount
+            )
+            
+            if difference > Decimal("0.01"):
+                error_msg = (
+                    f"Financial validation failed: "
+                    f"Principal ({self.financial_breakdown.principal.amount}) "
+                    f"+ Fees = {calculated_net}, "
+                    f"but Net Proceeds = {self.financial_breakdown.net_proceeds.amount}"
+                )
+                
+                # Record validation failure
+                self._record_event(
+                    OrderValidatedEvent(
+                        order_id=self.order_id.value,
+                        validation_passed=False,
+                        validation_message=error_msg,
+                        execution_id=str(self.execution_id.value)
+                    )
+                )
+                
+                raise ValueError(error_msg)
+            
+            # Record validation success
+            self._record_event(
+                OrderValidatedEvent(
+                    order_id=self.order_id.value,
+                    validation_passed=True,
+                    validation_message="Balance equation verified",
+                    execution_id=str(self.execution_id.value)
+                )
+            )
+        
+        except ValueError:
+            raise
+        except Exception as e:
+            error_msg = f"Unexpected validation error: {str(e)}"
+            self._record_event(
+                OrderValidatedEvent(
+                    order_id=self.order_id.value,
+                    validation_passed=False,
+                    validation_message=error_msg,
+                    execution_id=str(self.execution_id.value)
+                )
+            )
+            raise ValueError(error_msg)
+    
+    def mark_synced(self) -> None:
+        """
+        Mark order as successfully synced.
+        
+        Records sync success event.
+        """
+        self.order_status = "Synced"
+        
+        self._record_event(
+            OrderSyncedEvent(
+                order_id=self.order_id.value,
+                principal_amount=self.financial_breakdown.principal.amount if self.financial_breakdown else None,
+                net_proceeds=self.financial_breakdown.net_proceeds.amount if self.financial_breakdown else None,
+                execution_id=str(self.execution_id.value)
+            )
+        )
+    
+    def mark_failed(self, error_message: str, error_details: str = None) -> None:
+        """
+        Mark order as failed.
+        
+        Records failure event with error details.
+        """
+        self.order_status = "Failed"
+        self.error_message = error_message
+        
+        self._record_event(
+            OrderFailedEvent(
+                order_id=self.order_id.value,
+                error_type="SyncError",
+                error_message=error_message,
+                error_details=error_details,
+                step_failed="unknown",
+                execution_id=str(self.execution_id.value)
+            )
+        )
+    
+    def record_order_saved(self, database_id: str) -> None:
+        """
+        Record that order was saved to database.
+        
+        Args:
+            database_id: Database record ID
+        """
+        self._record_event(
+            OrderSavedEvent(
+                order_id=self.order_id.value,
+                database_id=database_id,
+                execution_id=str(self.execution_id.value)
+            )
+        )
+    
+    def record_invoice_created(
+        self,
+        invoice_id: int,
+        partner_id: int,
+        lines_count: int
+    ) -> None:
+        """
+        Record that invoice was created in Odoo.
+        
+        Args:
+            invoice_id: Odoo invoice ID
+            partner_id: Odoo partner ID
+            lines_count: Number of invoice lines
+        """
+        self._record_event(
+            InvoiceCreatedEvent(
+                order_id=self.order_id.value,
+                invoice_id=invoice_id,
+                partner_id=partner_id,
+                invoice_lines_count=lines_count,
+                execution_id=str(self.execution_id.value)
+            )
+        )
+    
+    # =========================================================================
+    # EVENT MANAGEMENT
+    # =========================================================================
+    
+    def _record_event(self, event: DomainEvent) -> None:
+        """
+        Record domain event.
+        
+        Args:
+            event: Domain event to record
+        """
+        self._events.append(event)
+    
+    def get_events(self) -> List[DomainEvent]:
+        """
+        Get all recorded events.
+        
+        Returns:
+            Copy of events list
+        """
+        return self._events.copy()
+    
+    def clear_events(self) -> None:
+        """Clear recorded events after persistence."""
+        self._events.clear()
+    
+    # ... rest of existing methods ...
+
+✅ Quick Test: Order Events
+bashcd /mnt/storage/Konozy_ai
+
+# Test Order entity with events
+python3 << 'EOF'
+from datetime import datetime
+from decimal import Decimal
+
+from core.domain.entities import Order
+from core.domain.value_objects import (
+    OrderNumber, ExecutionID, Money,
+    FinancialBreakdown, FinancialLine
+)
+
+# Create order
+breakdown = FinancialBreakdown(
+    principal=Money(amount=Decimal("100.00"), currency="EGP"),
+    financial_lines=[
+        FinancialLine(
+            line_type="FBAFee",
+            description="FBA Fee",
+            amount=Money(amount=Decimal("-10.00"), currency="EGP"),
+            sku="TEST-SKU"
+        )
+    ],
+    net_proceeds=Money(amount=Decimal("90.00"), currency="EGP")
+)
+
+order = Order(
+    order_id=OrderNumber(value="TEST-EVENTS-001"),
+    purchase_date=datetime.utcnow(),
+    buyer_email="test@example.com",
+    financial_breakdown=breakdown,
+    execution_id=ExecutionID.generate(),
+    marketplace="amazon"
+)
+
+# Check events
+events = order.get_events()
+print(f"\n✅ Order created with {len(events)} events:")
+for i, event in enumerate(events, 1):
+    print(f"   {i}. {event.event_type}")
+
+# Validate
+order.validate_financials()
+print(f"\n✅ After validation: {len(order.get_events())} events")
+
+# Mark synced
+order.mark_synced()
+print(f"\n✅ After sync: {len(order.get_events())} events")
+
+print("\n" + "="*60)
+print("All events recorded:")
+for i, event in enumerate(order.get_events(), 1):
+    print(f"{i}. {event.event_type}")
+
+print("\n✅ Order Entity Event Recording Working!")
+EOF
+```
+
+---
+
+## 📊 النتيجة المتوقعة
+```
+✅ Order created with 2 events:
+   1. OrderCreatedEvent
+   2. FinancialsExtractedEvent
+
+✅ After validation: 3 events
+
+✅ After sync: 4 events
+
+============================================================
+All events recorded:
+1. OrderCreatedEvent
+2. FinancialsExtractedEvent
+3. OrderValidatedEvent
+4. OrderSyncedEvent
+
+✅ Order Entity Event Recording Working!
+
+شغّل Test وأخبرني بالنتيجة! 🚀

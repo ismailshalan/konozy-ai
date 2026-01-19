@@ -1,9 +1,10 @@
 """FastAPI application main entry point."""
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from apps.api.v1.endpoints import orders
+from apps.api.v1.endpoints import marketplace, orders
 
 app = FastAPI(
     title="Konozy AI API",
@@ -11,8 +12,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Include routers
 app.include_router(orders.router, prefix="/api/v1")
+app.include_router(marketplace.router, prefix="/api/v1")
 
 
 @app.exception_handler(ValueError)

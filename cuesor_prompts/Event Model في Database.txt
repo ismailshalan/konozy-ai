@@ -1,0 +1,605 @@
+يا Cursor، نفّذ الآن:
+ملف: core/infrastructure/database/models.py (تحديث)
+أضف/حدّث EventModel في نهاية الملف:
+python# في models.py، أضف في النهاية (بعد EventModel الموجود):
+
+from sqlalchemy import Column, String, DateTime, Integer, BigInteger, Index
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.sql import func
+import uuid
+
+
+class EventModel(Base):
+    """
+    Event Store Model - Append-only storage for domain events.
+    
+    Architecture:
+    - Part of 1.1 Event Bus (Orchestration Layer)
+    - Stores all domain events permanently
+    - Enables event replay and time-travel debugging
+    - Foundation for audit trail (compliance)
+    
+    Features:
+    - Append-only (never updated or deleted)
+    - Sequence numbers per aggregate (optimistic locking)
+    - JSONB for flexible event data
+    - Multiple indexes for fast queries
+    """
+    
+    __tablename__ = "events"
+    
+    # Primary key (sequential for global ordering)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    
+    # Event metadata
+    event_id = Column(
+        UUID(as_uuid=True),
+        unique=True,
+        nullable=False,
+        default=uuid.uuid4,
+        index=True
+    )
+    event_type = Column(String(100), nullable=False, index=True)
+    event_version = Column(Integer, nullable=False, default=1)
+    
+    # Aggregate information
+    aggregate_id = Column(String(255), nullable=False, index=True)
+    aggregate_type = Column(String(100), nullable=False, index=True)
+    
+    # Event data (JSONB for flexible schema)
+    event_data = Column(JSONB, nullable=False)
+    
+    # Execution context (1.3 Execution-ID Architecture)
+    execution_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    user_id = Column(String(255), nullable=True)
+    
+    # Timestamp (immutable - set once)
+    occurred_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        index=True
+    )
+    
+    # Sequence number (per aggregate - for ordering & optimistic locking)
+    sequence_number = Column(Integer, nullable=False)
+    
+    # Metadata (flexible additional data)
+    metadata = Column(JSONB, nullable=True)
+    
+    # Performance indexes
+    __table_args__ = (
+        # Most common: get all events for aggregate in order
+        Index(
+            'ix_events_aggregate_sequence',
+            'aggregate_id',
+            'sequence_number',
+        ),
+        
+        # Query by aggregate type (e.g., all Order events)
+        Index(
+            'ix_events_aggregate_type_occurred',
+            'aggregate_type',
+            'occurred_at',
+        ),
+        
+        # Query by event type (e.g., all OrderCreatedEvents)
+        Index(
+            'ix_events_event_type_occurred',
+            'event_type',
+            'occurred_at',
+        ),
+        
+        # Trace workflow by execution_id
+        Index(
+            'ix_events_execution_id',
+            'execution_id',
+        ),
+        
+        # Ensure unique sequence per aggregate (optimistic locking)
+        Index(
+            'ix_events_aggregate_unique_sequence',
+            'aggregate_id',
+            'sequence_number',
+            unique=True,
+        ),
+    )
+    
+    def __repr__(self):
+        return (
+            f"<EventModel("
+            f"id={self.id}, "
+            f"event_type={self.event_type}, "
+            f"aggregate_id={self.aggregate_id}, "
+            f"seq={self.sequence_number}"
+            f")>"
+        )
+
+Step 2.2: Event Store Implementation
+ملف: core/infrastructure/database/event_store.py
+python"""
+Event Store Implementation.
+
+Append-only storage for domain events using PostgreSQL.
+
+Architecture:
+- Part of 1.1 Event Bus
+- Foundation for Event Sourcing
+- Enables time-travel debugging
+- Compliance-ready audit trail
+"""
+import logging
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+
+from core.domain.events.base import DomainEvent
+from core.infrastructure.database.models import EventModel
+
+
+logger = logging.getLogger(__name__)
+
+
+class ConcurrencyError(Exception):
+    """Raised when concurrent modification detected."""
+    pass
+
+
+class EventStore:
+    """
+    Event Store for domain events.
+    
+    Features:
+    - Append-only (events never modified or deleted)
+    - Optimistic concurrency control (sequence numbers)
+    - Event versioning
+    - Time-travel queries
+    - Aggregate rebuilding
+    
+    Usage:
+        async with EventStore(session) as store:
+            await store.append(event)
+            events = await store.get_events("order-123")
+    """
+    
+    def __init__(self, session: AsyncSession):
+        """
+        Initialize event store.
+        
+        Args:
+            session: SQLAlchemy async session
+        """
+        self.session = session
+    
+    async def append(
+        self,
+        event: DomainEvent,
+        expected_version: Optional[int] = None
+    ) -> None:
+        """
+        Append event to store.
+        
+        This is append-only. Events are immutable once written.
+        
+        Args:
+            event: Domain event to append
+            expected_version: Expected sequence number (optimistic locking)
+        
+        Raises:
+            ConcurrencyError: If expected_version doesn't match
+        """
+        logger.info(
+            f"Appending event: {event.event_type} "
+            f"(aggregate: {event.aggregate_id})"
+        )
+        
+        # Get next sequence number
+        sequence_number = await self._get_next_sequence_number(
+            event.aggregate_id
+        )
+        
+        # Check optimistic concurrency
+        if expected_version is not None:
+            if sequence_number != expected_version:
+                raise ConcurrencyError(
+                    f"Concurrency conflict: expected {expected_version}, "
+                    f"but current is {sequence_number - 1}"
+                )
+        
+        # Create event model
+        event_model = EventModel(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            event_version=event.event_version,
+            aggregate_id=event.aggregate_id,
+            aggregate_type=event.aggregate_type,
+            event_data=event._get_event_data(),
+            execution_id=event.execution_id,
+            user_id=event.user_id,
+            occurred_at=event.occurred_at,
+            sequence_number=sequence_number,
+            metadata=self._build_metadata(event)
+        )
+        
+        try:
+            # Add to session
+            self.session.add(event_model)
+            await self.session.flush()
+            
+            logger.info(
+                f"✅ Event appended: {event.event_type} "
+                f"(sequence: {sequence_number})"
+            )
+        
+        except IntegrityError as e:
+            logger.error(f"Failed to append: {e}")
+            raise ConcurrencyError(
+                "Event append failed - concurrent modification detected"
+            )
+    
+    async def get_events(
+        self,
+        aggregate_id: str,
+        from_sequence: int = 0,
+        to_sequence: Optional[int] = None
+    ) -> List[DomainEvent]:
+        """
+        Get all events for an aggregate.
+        
+        Args:
+            aggregate_id: Aggregate ID
+            from_sequence: Start from this sequence (inclusive)
+            to_sequence: End at this sequence (inclusive)
+        
+        Returns:
+            List of domain events in order
+        """
+        logger.info(f"Loading events for: {aggregate_id}")
+        
+        # Build query
+        query = select(EventModel).where(
+            EventModel.aggregate_id == aggregate_id
+        )
+        
+        if from_sequence > 0:
+            query = query.where(
+                EventModel.sequence_number >= from_sequence
+            )
+        
+        if to_sequence is not None:
+            query = query.where(
+                EventModel.sequence_number <= to_sequence
+            )
+        
+        # Order by sequence
+        query = query.order_by(EventModel.sequence_number)
+        
+        # Execute
+        result = await self.session.execute(query)
+        event_models = result.scalars().all()
+        
+        # Convert to domain events
+        events = [
+            self._to_domain_event(model)
+            for model in event_models
+        ]
+        
+        logger.info(f"✅ Loaded {len(events)} events")
+        
+        return events
+    
+    async def get_events_by_execution(
+        self,
+        execution_id: str
+    ) -> List[DomainEvent]:
+        """
+        Get all events for an execution.
+        
+        Useful for tracing complete workflow (1.3 Execution-ID).
+        
+        Args:
+            execution_id: Execution ID
+        
+        Returns:
+            List of events in chronological order
+        """
+        logger.info(f"Loading events for execution: {execution_id}")
+        
+        query = select(EventModel).where(
+            EventModel.execution_id == execution_id
+        ).order_by(EventModel.occurred_at)
+        
+        result = await self.session.execute(query)
+        event_models = result.scalars().all()
+        
+        events = [
+            self._to_domain_event(model)
+            for model in event_models
+        ]
+        
+        logger.info(f"✅ Loaded {len(events)} events")
+        
+        return events
+    
+    async def get_latest_sequence(
+        self,
+        aggregate_id: str
+    ) -> int:
+        """
+        Get latest sequence number for aggregate.
+        
+        Args:
+            aggregate_id: Aggregate ID
+        
+        Returns:
+            Latest sequence number (0 if no events)
+        """
+        query = select(
+            func.max(EventModel.sequence_number)
+        ).where(
+            EventModel.aggregate_id == aggregate_id
+        )
+        
+        result = await self.session.execute(query)
+        max_seq = result.scalar()
+        
+        return max_seq or 0
+    
+    async def aggregate_exists(self, aggregate_id: str) -> bool:
+        """Check if aggregate has any events."""
+        query = select(func.count()).where(
+            EventModel.aggregate_id == aggregate_id
+        )
+        
+        result = await self.session.execute(query)
+        count = result.scalar()
+        
+        return count > 0
+    
+    # =========================================================================
+    # PRIVATE METHODS
+    # =========================================================================
+    
+    async def _get_next_sequence_number(
+        self,
+        aggregate_id: str
+    ) -> int:
+        """Get next sequence number for aggregate."""
+        current = await self.get_latest_sequence(aggregate_id)
+        return current + 1
+    
+    def _to_domain_event(self, model: EventModel) -> DomainEvent:
+        """Convert EventModel to DomainEvent."""
+        # Import event classes
+        from core.domain.events import (
+            OrderCreatedEvent,
+            FinancialsExtractedEvent,
+            OrderValidatedEvent,
+            OrderSavedEvent,
+            InvoiceCreatedEvent,
+            OrderSyncedEvent,
+            OrderFailedEvent,
+            NotificationSentEvent,
+        )
+        
+        # Map event type to class
+        event_classes = {
+            'OrderCreatedEvent': OrderCreatedEvent,
+            'FinancialsExtractedEvent': FinancialsExtractedEvent,
+            'OrderValidatedEvent': OrderValidatedEvent,
+            'OrderSavedEvent': OrderSavedEvent,
+            'InvoiceCreatedEvent': InvoiceCreatedEvent,
+            'OrderSyncedEvent': OrderSyncedEvent,
+            'OrderFailedEvent': OrderFailedEvent,
+            'NotificationSentEvent': NotificationSentEvent,
+        }
+        
+        event_class = event_classes.get(model.event_type)
+        
+        if not event_class:
+            logger.warning(f"Unknown event type: {model.event_type}")
+            return None
+        
+        # Reconstruct event
+        event = event_class(
+            aggregate_id=model.aggregate_id,
+            execution_id=str(model.execution_id) if model.execution_id else None,
+            user_id=model.user_id,
+            **model.event_data
+        )
+        
+        # Set metadata
+        object.__setattr__(event, 'event_id', str(model.event_id))
+        object.__setattr__(event, 'occurred_at', model.occurred_at)
+        
+        return event
+    
+    def _build_metadata(self, event: DomainEvent) -> Dict[str, Any]:
+        """Build metadata for event."""
+        return {
+            'event_class': event.__class__.__name__,
+            'event_module': event.__class__.__module__,
+        }
+
+✅ Checkpoint 2.1: Test Event Store
+ملف: scripts/test_day1_session2.py
+python"""Test Day 1 Session 2: Event Store."""
+import asyncio
+import logging
+from datetime import datetime
+
+from core.infrastructure.database.config import (
+    init_database,
+    get_session,
+    close_database
+)
+from core.infrastructure.database.event_store import EventStore
+from core.domain.events import OrderCreatedEvent, OrderSyncedEvent
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+async def test_event_store():
+    """Test event store operations."""
+    
+    logger.info("="*70)
+    logger.info("DAY 1 - SESSION 2: Event Store Test")
+    logger.info("="*70)
+    
+    try:
+        # 1. Initialize database
+        logger.info("\n1. Initializing database...")
+        await init_database()
+        logger.info("✅ Database initialized")
+        
+        # 2. Create test events
+        logger.info("\n2. Creating test events...")
+        
+        events = [
+            OrderCreatedEvent(
+                order_id="ES-TEST-001",
+                marketplace="amazon",
+                buyer_email="test@example.com",
+                purchase_date=datetime.utcnow().isoformat(),
+                execution_id="exec-test-001"
+            ),
+            OrderSyncedEvent(
+                order_id="ES-TEST-001",
+                invoice_id=12345,
+                execution_id="exec-test-001"
+            ),
+        ]
+        
+        logger.info(f"✅ Created {len(events)} test events")
+        
+        # 3. Persist events
+        logger.info("\n3. Persisting events to event store...")
+        
+        async for session in get_session():
+            event_store = EventStore(session)
+            
+            for event in events:
+                await event_store.append(event)
+            
+            await session.commit()
+        
+        logger.info("✅ Events persisted")
+        
+        # 4. Retrieve events
+        logger.info("\n4. Retrieving events...")
+        
+        async for session in get_session():
+            event_store = EventStore(session)
+            
+            retrieved = await event_store.get_events("ES-TEST-001")
+        
+        logger.info(f"✅ Retrieved {len(retrieved)} events")
+        
+        # 5. Display event stream
+        logger.info("\n5. Event Stream:")
+        for i, event in enumerate(retrieved, 1):
+            logger.info(
+                f"   {i}. {event.event_type} "
+                f"at {event.occurred_at.strftime('%H:%M:%S')}"
+            )
+        
+        # 6. Test execution query
+        logger.info("\n6. Testing execution query...")
+        
+        async for session in get_session():
+            event_store = EventStore(session)
+            
+            exec_events = await event_store.get_events_by_execution(
+                "exec-test-001"
+            )
+        
+        logger.info(f"✅ Found {len(exec_events)} events for execution")
+        
+        # 7. Test sequence numbers
+        logger.info("\n7. Verifying sequence numbers...")
+        
+        assert retrieved[0].event_type == "OrderCreatedEvent"
+        assert retrieved[1].event_type == "OrderSyncedEvent"
+        
+        logger.info("✅ Sequence order correct")
+        
+        logger.info("\n" + "="*70)
+        logger.info("✅ DAY 1 - SESSION 2 COMPLETE!")
+        logger.info("="*70)
+        logger.info("\nEvent Store is working:")
+        logger.info("  ✅ Events appended")
+        logger.info("  ✅ Events retrieved")
+        logger.info("  ✅ Execution tracking")
+        logger.info("  ✅ Sequence numbers")
+        logger.info("\nReady for Session 3: Order Entity Integration")
+        
+    except Exception as e:
+        logger.error(f"\n❌ TEST FAILED: {e}", exc_info=True)
+        raise
+    
+    finally:
+        await close_database()
+
+
+if __name__ == "__main__":
+    asyncio.run(test_event_store())
+
+🚀 شغّل Test الآن!
+bashcd /mnt/storage/Konozy_ai
+
+# Run event store test
+python scripts/test_day1_session2.py
+```
+
+---
+
+## 📊 النتيجة المتوقعة
+```
+======================================================================
+DAY 1 - SESSION 2: Event Store Test
+======================================================================
+
+1. Initializing database...
+✅ Database initialized
+
+2. Creating test events...
+✅ Created 2 test events
+
+3. Persisting events to event store...
+✅ Event appended: OrderCreatedEvent (sequence: 1)
+✅ Event appended: OrderSyncedEvent (sequence: 2)
+✅ Events persisted
+
+4. Retrieving events...
+✅ Loaded 2 events
+
+5. Event Stream:
+   1. OrderCreatedEvent at 14:30:45
+   2. OrderSyncedEvent at 14:30:45
+
+6. Testing execution query...
+✅ Found 2 events for execution
+
+7. Verifying sequence numbers...
+✅ Sequence order correct
+
+======================================================================
+✅ DAY 1 - SESSION 2 COMPLETE!
+======================================================================
+
+Event Store is working:
+  ✅ Events appended
+  ✅ Events retrieved
+  ✅ Execution tracking
+  ✅ Sequence numbers
+
+Ready for Session 3: Order Entity Integration
+
+شغّل Test وأخبرني بالنتيجة! 🚀
+بعدها ننتقل لـ Session 3: Order Entity Integration (آخر session في Day 1)Claude is AI and can make mistakes. Please double-check responses. Sonnet 4.5Claude is AI and can make mistakes. Please double-check responses.ShareArtifactsDownload allLegacy migration package.tarGZ Quick referenceDocument · MD Legacy system analysisDocument · MD Order 408 8327146 7101142Code · JSON Order 407 1263947 9146736Code · JSON Contentمراجعة البنية الحالية ثم البدء بـ PHASE 1: Settings Module.
+
+

@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from konozy_sdk.logging import get_logger
+from core.infrastructure.logging import get_logger
 
 from .events import Event
 
@@ -61,10 +61,9 @@ class InMemoryEventBus(EventBusProtocol):
             return
 
         self._logger.info(
-            "publishing_event",
-            event_name=event.name,
-            execution_id=event.metadata.execution_id,
-            handler_count=len(handlers),
+            f"publishing_event: event_name={event.name}, "
+            f"execution_id={event.metadata.execution_id}, "
+            f"handler_count={len(handlers)}"
         )
 
         for handler in handlers:
@@ -72,9 +71,7 @@ class InMemoryEventBus(EventBusProtocol):
                 await handler(event)
             except Exception as exc:
                 self._logger.error(
-                    "handler_error",
-                    event_name=event.name,
-                    handler=str(handler),
-                    error=str(exc),
+                    f"handler_error: event_name={event.name}, "
+                    f"handler={str(handler)}, error={str(exc)}",
                     exc_info=True,
                 )

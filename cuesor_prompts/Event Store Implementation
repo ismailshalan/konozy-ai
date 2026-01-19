@@ -1,0 +1,314 @@
+markdown# TASK: Implement Event Store for Event Sourcing Architecture
+
+## Context
+We are building the Orchestration Layer (1.1 Event Bus) for the Konozy AI Platform. 
+We've completed Session 1 (Domain Events). Now we need to implement the Event Store 
+for persistent event storage in PostgreSQL.
+
+## Current Status
+✅ Domain Events created:
+   - core/domain/events/base.py
+   - core/domain/events/order_events.py
+   - core/domain/events/__init__.py
+
+## Objective
+Implement Event Store with PostgreSQL for append-only event persistence.
+
+---
+
+## STEP 1: Update EventModel in Database
+
+File: `core/infrastructure/database/models.py`
+
+**Action:** Add or update the EventModel class with the following requirements:
+
+1. **Table name:** `events`
+2. **Primary key:** BigInteger auto-increment (for global ordering)
+3. **Fields:**
+   - event_id: UUID (unique, indexed)
+   - event_type: String(100) (indexed)
+   - event_version: Integer (default 1)
+   - aggregate_id: String(255) (indexed)
+   - aggregate_type: String(100) (indexed)
+   - event_data: JSONB (flexible schema)
+   - execution_id: UUID (nullable, indexed)
+   - user_id: String(255) (nullable)
+   - occurred_at: DateTime (server_default=func.now(), indexed)
+   - sequence_number: Integer (for per-aggregate ordering)
+   - metadata: JSONB (nullable)
+
+4. **Indexes (critical for performance):**
+   - ix_events_aggregate_sequence (aggregate_id, sequence_number)
+   - ix_events_aggregate_type_occurred (aggregate_type, occurred_at)
+   - ix_events_event_type_occurred (event_type, occurred_at)
+   - ix_events_execution_id (execution_id)
+   - ix_events_aggregate_unique_sequence (aggregate_id, sequence_number) - UNIQUE
+
+**Implementation notes:**
+- Use SQLAlchemy declarative base
+- Ensure compatibility with existing OrderModel, OrderItemModel, FinancialLineModel
+- Add proper __repr__ for debugging
+
+---
+
+## STEP 2: Create Event Store Implementation
+
+File: `core/infrastructure/database/event_store.py`
+
+**Action:** Create EventStore class with the following methods:
+
+### Class: EventStore
+
+**Constructor:**
+```python
+def __init__(self, session: AsyncSession)
+```
+
+**Methods to implement:**
+
+1. **append(event: DomainEvent, expected_version: Optional[int] = None) -> None**
+   - Get next sequence number for aggregate
+   - Check optimistic concurrency (if expected_version provided)
+   - Create EventModel from DomainEvent
+   - Add to session and flush
+   - Raise ConcurrencyError on conflict
+   - Log success with sequence number
+
+2. **get_events(aggregate_id: str, from_sequence: int = 0, to_sequence: Optional[int] = None) -> List[DomainEvent]**
+   - Query events for aggregate
+   - Apply sequence filters
+   - Order by sequence_number
+   - Convert EventModel to DomainEvent
+   - Return list
+
+3. **get_events_by_execution(execution_id: str) -> List[DomainEvent]**
+   - Query events by execution_id
+   - Order by occurred_at
+   - Return events for workflow tracing
+
+4. **get_latest_sequence(aggregate_id: str) -> int**
+   - Get max sequence_number for aggregate
+   - Return 0 if no events
+
+5. **aggregate_exists(aggregate_id: str) -> bool**
+   - Check if aggregate has any events
+   - Return boolean
+
+**Private methods:**
+
+6. **_get_next_sequence_number(aggregate_id: str) -> int**
+   - Get current max + 1
+
+7. **_to_domain_event(model: EventModel) -> DomainEvent**
+   - Map event_type to event class:
+     - OrderCreatedEvent
+     - FinancialsExtractedEvent
+     - OrderValidatedEvent
+     - OrderSavedEvent
+     - InvoiceCreatedEvent
+     - OrderSyncedEvent
+     - OrderFailedEvent
+     - NotificationSentEvent
+   - Reconstruct event from model.event_data
+   - Set event_id and occurred_at
+   - Return domain event instance
+
+8. **_build_metadata(event: DomainEvent) -> Dict[str, Any]**
+   - Return dict with event_class and event_module
+
+**Exception class:**
+```python
+class ConcurrencyError(Exception):
+    """Raised when concurrent modification is detected."""
+    pass
+```
+
+**Implementation notes:**
+- Use async/await throughout
+- Use SQLAlchemy select() for queries
+- Handle IntegrityError for concurrency conflicts
+- Add comprehensive logging (info level for operations)
+- Import all event types from core.domain.events
+
+---
+
+## STEP 3: Create Test Script
+
+File: `scripts/test_day1_session2.py`
+
+**Action:** Create test script with the following test cases:
+
+1. **Initialize database** (init_database())
+2. **Create test events:**
+   - OrderCreatedEvent for "ES-TEST-001"
+   - OrderSyncedEvent for "ES-TEST-001"
+3. **Persist events** using EventStore.append()
+4. **Retrieve events** using EventStore.get_events()
+5. **Test execution query** using EventStore.get_events_by_execution()
+6. **Verify sequence numbers** (assert correct order)
+7. **Display event stream** with timestamps
+
+**Test output format:**
+```
+======================================================================
+DAY 1 - SESSION 2: Event Store Test
+======================================================================
+
+1. Initializing database...
+✅ Database initialized
+
+2. Creating test events...
+✅ Created 2 test events
+
+3. Persisting events to event store...
+✅ Event appended: OrderCreatedEvent (sequence: 1)
+✅ Event appended: OrderSyncedEvent (sequence: 2)
+✅ Events persisted
+
+4. Retrieving events...
+✅ Loaded 2 events
+
+5. Event Stream:
+   1. OrderCreatedEvent at 14:30:45
+   2. OrderSyncedEvent at 14:30:45
+
+6. Testing execution query...
+✅ Found 2 events for execution
+
+7. Verifying sequence numbers...
+✅ Sequence order correct
+
+======================================================================
+✅ DAY 1 - SESSION 2 COMPLETE!
+======================================================================
+
+Event Store is working:
+  ✅ Events appended
+  ✅ Events retrieved
+  ✅ Execution tracking
+  ✅ Sequence numbers
+
+Ready for Session 3: Order Entity Integration
+```
+
+**Error handling:**
+- Wrap in try/except
+- Log errors with exc_info=True
+- Raise on failure
+- Always close database in finally block
+
+---
+
+## REQUIREMENTS
+
+1. **Code quality:**
+   - Type hints on all methods
+   - Comprehensive docstrings (Google style)
+   - Professional logging with proper levels
+   - Clean error messages
+
+2. **Architecture compliance:**
+   - No domain imports in infrastructure (except for types)
+   - Async/await throughout
+   - Follow existing project patterns
+   - Maintain separation of concerns
+
+3. **Database:**
+   - Use existing database config from core.infrastructure.database.config
+   - Compatible with existing models
+   - Proper index usage
+   - Transaction management
+
+4. **Testing:**
+   - Runnable script
+   - Clear success/failure indicators
+   - Helpful error messages
+   - Clean output formatting
+
+---
+
+## VERIFICATION CHECKLIST
+
+After implementation, verify:
+- [ ] EventModel added to models.py with all indexes
+- [ ] EventStore class created with all methods
+- [ ] ConcurrencyError exception defined
+- [ ] Test script created and executable
+- [ ] All imports working
+- [ ] Type hints present
+- [ ] Docstrings complete
+- [ ] Logging implemented
+- [ ] Error handling proper
+
+---
+
+## SUCCESS CRITERIA
+
+Run this command and it should pass:
+```bash
+python scripts/test_day1_session2.py
+```
+
+Expected: All checks ✅ and "DAY 1 - SESSION 2 COMPLETE!" message
+
+---
+
+## NOTES
+
+- This is part of a 4-day Event Sourcing + Event Bus implementation
+- Foundation for multi-agent orchestration (1.0 Orchestration Layer)
+- Critical for audit trail and compliance
+- Will be used by all pipelines (3.1-3.5) and agents (4.0, 5.0)
+
+---
+
+END OF TASK SPECIFICATION
+```
+
+---
+
+## 🎯 كيف تستخدم هذا مع Cursor
+
+### Option 1: Copy & Paste في Cursor Chat
+```
+1. افتح Cursor
+2. اضغط Cmd/Ctrl + L (فتح Chat)
+3. الصق الـ prompt كامل
+4. اضغط Enter
+5. Cursor سيبدأ التنفيذ تلقائياً
+```
+
+---
+
+### Option 2: استخدم Cursor Composer
+```
+1. اضغط Cmd/Ctrl + I (Composer)
+2. الصق الـ prompt
+3. حدد الملفات المطلوبة:
+   - core/infrastructure/database/models.py
+   - core/infrastructure/database/event_store.py (new)
+   - scripts/test_day1_session2.py (new)
+4. اضغط "Generate"
+
+Option 3: Create as .cursorrules
+bash# إضافة للـ .cursorrules
+cat >> .cursorrules << 'EOF'
+
+## Event Store Implementation Guidelines
+- Always use append-only pattern for events
+- Never update or delete events
+- Use sequence numbers for optimistic locking
+- Index by aggregate_id, event_type, execution_id
+- JSONB for flexible event data
+- Async/await throughout
+EOF
+
+✅ بعد التنفيذ
+bash# شغّل الاختبار
+python scripts/test_day1_session2.py
+
+# إذا نجح ✅
+echo "Session 2 Complete! Ready for Session 3"
+
+# إذا فشل ❌
+# شارك الـ error وسأساعدك تصلحه

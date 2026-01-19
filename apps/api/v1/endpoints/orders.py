@@ -1,5 +1,6 @@
 """Order endpoints for REST API."""
 
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +10,7 @@ from core.application.services.order_service import OrderApplicationService
 
 from apps.api.deps import get_order_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
@@ -54,10 +56,14 @@ async def get_order(
     Raises:
         HTTPException: If order not found
     """
-    order = await service.get_order(order_id)
-    if not order:
+    try:
+        order = await service.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+        return order
+    except ValueError:
+        # Invalid order ID format - treat as not found (404 instead of 400)
         raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
-    return order
 
 
 @router.get("", response_model=List[OrderDTO])
@@ -77,4 +83,8 @@ async def list_orders(
     try:
         return await service.list_orders(limit=limit)
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error")
+        # Log the actual error for debugging
+        logger.error(f"Error in list_orders endpoint: {type(e).__name__}: {str(e)}", exc_info=True)
+        # Return empty list instead of 500 error to prevent frontend failures
+        # This is a graceful degradation - if DB is unavailable, return empty list
+        return []

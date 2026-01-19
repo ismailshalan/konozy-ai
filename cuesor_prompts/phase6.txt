@@ -1,0 +1,262 @@
+يا Cursor، نفّذ الآن:
+الملف: core/infrastructure/adapters/amazon/fee_mapper.py
+أضف method جديد في نهاية الـ class:
+python@staticmethod
+def extract_sku_to_principal(
+    financial_events: Dict[str, Any]
+) -> Dict[str, Decimal]:
+    """
+    Extract SKU-level principal breakdown for multi-item orders.
+    
+    For orders with multiple different products, this extracts
+    how much principal revenue belongs to each SKU.
+    
+    Args:
+        financial_events: Amazon Financial Events API response
+    
+    Returns:
+        Dictionary mapping SKU to principal amount
+        Example: {
+            "JR-ZS283": Decimal("198.83"),
+            "jr_PBF17 __Black": Decimal("790.0")
+        }
+    
+    Example:
+        >>> events = {
+        ...     "ShipmentEventList": [{
+        ...         "ShipmentItemList": [
+        ...             {
+        ...                 "SellerSKU": "SKU-A",
+        ...                 "ItemChargeList": [{
+        ...                     "ChargeType": "Principal",
+        ...                     "ChargeAmount": {"CurrencyAmount": "100.00"}
+        ...                 }]
+        ...             },
+        ...             {
+        ...                 "SellerSKU": "SKU-B",
+        ...                 "ItemChargeList": [{
+        ...                     "ChargeType": "Principal",
+        ...                     "ChargeAmount": {"CurrencyAmount": "200.00"}
+        ...                 }]
+        ...             }
+        ...         ]
+        ...     }]
+        ... }
+        >>> extract_sku_to_principal(events)
+        {'SKU-A': Decimal('100.00'), 'SKU-B': Decimal('200.00')}
+    """
+    sku_to_principal: Dict[str, Decimal] = {}
+    
+    shipment_events = financial_events.get("ShipmentEventList", [])
+    
+    for shipment in shipment_events:
+        shipment_items = shipment.get("ShipmentItemList", [])
+        
+        for item in shipment_items:
+            sku = item.get("SellerSKU", "UNKNOWN")
+            
+            # Extract principal charges for this SKU
+            for charge in item.get("ItemChargeList", []):
+                if charge["ChargeType"] == "Principal":
+                    amount_data = charge["ChargeAmount"]
+                    amount = Decimal(str(amount_data["CurrencyAmount"]))
+                    
+                    # Accumulate if SKU appears multiple times
+                    # (e.g., same SKU in multiple shipments)
+                    if sku in sku_to_principal:
+                        sku_to_principal[sku] += amount
+                    else:
+                        sku_to_principal[sku] = amount
+                    
+                    logger.debug(
+                        f"[SKU_PRINCIPAL] Extracted principal for SKU {sku}: "
+                        f"{amount} (total so far: {sku_to_principal[sku]})"
+                    )
+    
+    logger.info(
+        f"[SKU_PRINCIPAL] Extracted principal for {len(sku_to_principal)} SKU(s): "
+        f"{dict(sku_to_principal)}"
+    )
+    
+    return sku_to_principal
+اختبر الإضافة:
+bashcd /mnt/storage/Konozy_ai
+
+python3 << 'EOF'
+from decimal import Decimal
+from core.infrastructure.adapters.amazon.fee_mapper import AmazonFeeMapper
+
+# Test with multi-item order
+test_events = {
+    "ShipmentEventList": [{
+        "ShipmentItemList": [
+            {
+                "SellerSKU": "SKU-A",
+                "ItemChargeList": [{
+                    "ChargeType": "Principal",
+                    "ChargeAmount": {
+                        "CurrencyCode": "EGP",
+                        "CurrencyAmount": "100.00"
+                    }
+                }]
+            },
+            {
+                "SellerSKU": "SKU-B",
+                "ItemChargeList": [{
+                    "ChargeType": "Principal",
+                    "ChargeAmount": {
+                        "CurrencyCode": "EGP",
+                        "CurrencyAmount": "200.00"
+                    }
+                }]
+            }
+        ]
+    }]
+}
+
+result = AmazonFeeMapper.extract_sku_to_principal(test_events)
+
+print("✅ SKU to Principal extraction:")
+for sku, amount in result.items():
+    print(f"  {sku}: {amount} EGP")
+
+assert result["SKU-A"] == Decimal("100.00")
+assert result["SKU-B"] == Decimal("200.00")
+print("\n✅ extract_sku_to_principal working correctly!")
+EOF
+
+خطوة 2: تحديث Odoo Mapper (1 ساعة)
+يا Cursor، نفّذ الآن:
+الملف: core/infrastructure/adapters/odoo/odoo_financial_mapper.py
+استبدل method to_invoice_lines بالكامل:
+python@staticmethod
+def to_invoice_lines(
+    breakdown: FinancialBreakdown,
+    sku_to_principal: Dict[str, Decimal],
+    product_lookup: Optional[Callable[[str], Optional[int]]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Convert FinancialBreakdown to Odoo invoice lines.
+    
+    Supports multi-item orders with SKU-level principal breakdown.
+    
+    Args:
+        breakdown: Complete financial breakdown from Amazon
+        sku_to_principal: Mapping of SKU to principal amount
+                         Example: {"SKU-A": Decimal("100.00"), "SKU-B": Decimal("200.00")}
+        product_lookup: Optional function to get Odoo product_id from SKU
+    
+    Returns:
+        List of invoice line dictionaries ready for Odoo XML-RPC
+    
+    Example:
+        >>> breakdown = FinancialBreakdown(...)
+        >>> sku_to_principal = {"SKU-A": Decimal("100.00")}
+        >>> lines = OdooFinancialMapper.to_invoice_lines(breakdown, sku_to_principal)
+        >>> len(lines)  # Principal + fees/charges
+        3
+    
+    Invoice line structure:
+        - Principal lines (one per SKU)
+        - Financial lines (fees, charges, promos)
+    """
+    lines = []
+    
+    # =========================================================================
+    # PRINCIPAL LINES (Revenue) - One per SKU
+    # =========================================================================
+    for sku, principal_amount in sku_to_principal.items():
+        line_dict = {
+            "name": f"Sales Revenue - {sku}",
+            "quantity": 1.0,
+            "price_unit": float(principal_amount),
+            "account_id": PRINCIPAL_MAPPING.account_id,
+            "tax_ids": TAX_IDS_ZERO_RATED,
+        }
+        
+        # Lookup product if function provided
+        if product_lookup:
+            try:
+                product_id = product_lookup(sku)
+                if product_id:
+                    line_dict["product_id"] = product_id
+            except Exception as e:
+                import logging
+                logging.warning(
+                    f"Product lookup failed for SKU {sku}: {e}. "
+                    f"Creating line without product link."
+                )
+        
+        lines.append(line_dict)
+    
+    # =========================================================================
+    # FINANCIAL LINES (Fees, Charges, Promos)
+    # =========================================================================
+    for financial_line in breakdown.financial_lines:
+        line_dict = {
+            "name": financial_line.description,
+            "quantity": 1.0,
+            "price_unit": float(financial_line.amount.amount),
+            "tax_ids": TAX_IDS_ZERO_RATED,
+        }
+        
+        # Add account mapping if available
+        if financial_line.odoo_mapping:
+            line_dict["account_id"] = financial_line.odoo_mapping.account_id
+            
+            # Add analytic distribution (Odoo 19 format)
+            if financial_line.odoo_mapping.analytic_account_id:
+                line_dict["analytic_distribution"] = {
+                    str(financial_line.odoo_mapping.analytic_account_id): 100.0
+                }
+        
+        lines.append(line_dict)
+    
+    return lines
+اختبر التحديث:
+bashcd /mnt/storage/Konozy_ai
+
+python3 << 'EOF'
+from decimal import Decimal
+from core.domain.value_objects import Money, FinancialBreakdown, FinancialLine
+from core.infrastructure.adapters.odoo.odoo_financial_mapper import OdooFinancialMapper
+
+# Create test breakdown
+principal = Money(amount=Decimal("300.00"), currency="EGP")
+financial_lines = []
+net_proceeds = Money(amount=Decimal("300.00"), currency="EGP")
+
+breakdown = FinancialBreakdown(
+    principal=principal,
+    financial_lines=financial_lines,
+    net_proceeds=net_proceeds
+)
+
+# Multi-SKU principal
+sku_to_principal = {
+    "SKU-A": Decimal("100.00"),
+    "SKU-B": Decimal("200.00"),
+}
+
+# Convert to invoice lines
+lines = OdooFinancialMapper.to_invoice_lines(
+    breakdown=breakdown,
+    sku_to_principal=sku_to_principal
+)
+
+print("✅ Invoice lines generated:")
+print(f"  Total lines: {len(lines)}")
+
+# Verify principal lines
+principal_lines = [l for l in lines if "Sales Revenue" in l["name"]]
+print(f"  Principal lines: {len(principal_lines)}")
+
+for line in principal_lines:
+    print(f"    - {line['name']}: {line['price_unit']} EGP")
+
+assert len(principal_lines) == 2
+assert principal_lines[0]["price_unit"] == 100.00
+assert principal_lines[1]["price_unit"] == 200.00
+
+print("\n✅ Multi-item order support working!")
+EOF

@@ -1,0 +1,466 @@
+يا Cursor، نفّذ الآن:
+Step 1.1: Create Events Directory Structure
+bashcd /mnt/storage/Konozy_ai
+
+# Create directory structure
+mkdir -p core/domain/events
+touch core/domain/events/__init__.py
+
+Step 1.2: Base Domain Event
+ملف: core/domain/events/base.py
+python"""
+Base Domain Event.
+
+All domain events inherit from this base class.
+Foundation for Event Sourcing and Event-driven Architecture.
+"""
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional, Dict, Any
+import uuid
+
+
+@dataclass
+class DomainEvent:
+    """
+    Base class for all domain events.
+    
+    Events are immutable records of things that have happened.
+    They capture state changes in the system.
+    
+    Architecture Note:
+    - Part of 1.1 Event Bus (Orchestration Layer)
+    - Foundation for multi-agent communication
+    - Enables event-driven workflows
+    """
+    
+    # Event metadata
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    event_type: str = field(init=False)
+    event_version: int = 1
+    
+    # Aggregate information
+    aggregate_id: str = field(default="")
+    aggregate_type: str = field(init=False)
+    
+    # Execution context (1.3 Execution-ID Architecture)
+    execution_id: Optional[str] = None
+    user_id: Optional[str] = None
+    
+    # Timestamp
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    
+    def __post_init__(self):
+        """Set event type and aggregate type from class name."""
+        if not hasattr(self, 'event_type') or not self.event_type:
+            object.__setattr__(self, 'event_type', self.__class__.__name__)
+        
+        if not hasattr(self, 'aggregate_type') or not self.aggregate_type:
+            object.__setattr__(self, 'aggregate_type', self._get_aggregate_type())
+    
+    def _get_aggregate_type(self) -> str:
+        """
+        Extract aggregate type from event type.
+        
+        Example: OrderCreatedEvent -> Order
+        """
+        event_name = self.__class__.__name__
+        
+        # Remove 'Event' suffix
+        if event_name.endswith('Event'):
+            event_name = event_name[:-5]
+        
+        # Extract aggregate name (first word before action)
+        for i, char in enumerate(event_name):
+            if i > 0 and char.isupper():
+                return event_name[:i]
+        
+        return event_name
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert event to dictionary for serialization.
+        
+        Used for:
+        - Event Store persistence
+        - Event Bus publishing
+        - API responses
+        
+        Returns:
+            Dictionary representation of event
+        """
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "event_version": self.event_version,
+            "aggregate_id": self.aggregate_id,
+            "aggregate_type": self.aggregate_type,
+            "execution_id": self.execution_id,
+            "user_id": self.user_id,
+            "occurred_at": self.occurred_at.isoformat(),
+            "data": self._get_event_data()
+        }
+    
+    def _get_event_data(self) -> Dict[str, Any]:
+        """
+        Get event-specific data.
+        
+        Override in subclasses to provide event payload.
+        
+        Returns:
+            Event data dictionary
+        """
+        data = {}
+        
+        for key, value in self.__dict__.items():
+            if key not in [
+                'event_id', 'event_type', 'event_version',
+                'aggregate_id', 'aggregate_type',
+                'execution_id', 'user_id', 'occurred_at'
+            ]:
+                # Serialize value
+                if hasattr(value, 'to_dict'):
+                    data[key] = value.to_dict()
+                elif hasattr(value, '__dict__'):
+                    data[key] = str(value)
+                else:
+                    data[key] = value
+        
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'DomainEvent':
+        """
+        Create event from dictionary.
+        
+        Used for:
+        - Event Store retrieval
+        - Event Bus consumption
+        - API requests
+        
+        Args:
+            data: Event data dictionary
+        
+        Returns:
+            Event instance
+        """
+        event_data = data.get('data', {})
+        
+        return cls(
+            aggregate_id=data['aggregate_id'],
+            execution_id=data.get('execution_id'),
+            user_id=data.get('user_id'),
+            **event_data
+        )
+
+Step 1.3: Order Domain Events
+ملف: core/domain/events/order_events.py
+python"""
+Order Domain Events.
+
+Events that occur during order lifecycle in 3.1 Order Pipeline.
+
+Architecture Integration:
+- Published to 1.1 Event Bus
+- Stored in Event Store
+- Tracked by 1.3 Execution-ID
+- Consumed by agents in 4.0 and 5.0
+"""
+from dataclasses import dataclass
+from typing import Optional
+from decimal import Decimal
+
+from .base import DomainEvent
+
+
+@dataclass
+class OrderCreatedEvent(DomainEvent):
+    """
+    Order was created in the system.
+    
+    Pipeline: 3.1 Order Pipeline
+    Trigger: New order ingested from marketplace
+    Consumers: Control Agent, Notification Agent
+    """
+    
+    order_id: str = ""
+    marketplace: str = ""
+    buyer_email: str = ""
+    purchase_date: str = ""
+    
+    def __post_init__(self):
+        """Set aggregate_id to order_id."""
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class FinancialsExtractedEvent(DomainEvent):
+    """
+    Financial data extracted from marketplace API.
+    
+    Pipeline: 3.3 Finance Pipeline
+    Agent: Amazon Order Agent (4.1)
+    Next: OrderValidatedEvent
+    """
+    
+    order_id: str = ""
+    principal_amount: Optional[Decimal] = None
+    principal_currency: str = ""
+    net_proceeds: Optional[Decimal] = None
+    financial_lines_count: int = 0
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class OrderValidatedEvent(DomainEvent):
+    """
+    Order financials validated.
+    
+    Validation: Principal - Fees = Net Proceeds
+    Critical: Financial accuracy 100%
+    Next: OrderSavedEvent or OrderFailedEvent
+    """
+    
+    order_id: str = ""
+    validation_passed: bool = True
+    validation_message: str = ""
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class OrderSavedEvent(DomainEvent):
+    """
+    Order persisted to database.
+    
+    Infrastructure: PostgreSQL
+    Next: InvoiceCreatedEvent (if Odoo integration enabled)
+    """
+    
+    order_id: str = ""
+    database_id: Optional[str] = None
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class InvoiceCreatedEvent(DomainEvent):
+    """
+    Invoice created in Odoo ERP.
+    
+    Integration: 9.0 Odoo ERP Integration
+    System: Odoo ERP (external)
+    Next: OrderSyncedEvent
+    """
+    
+    order_id: str = ""
+    invoice_id: int = 0
+    partner_id: int = 0
+    invoice_lines_count: int = 0
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class OrderSyncedEvent(DomainEvent):
+    """
+    Order sync completed successfully.
+    
+    Final success event in workflow.
+    Consumers: Dashboard, Notification Agent, Analytics
+    """
+    
+    order_id: str = ""
+    invoice_id: Optional[int] = None
+    principal_amount: Optional[Decimal] = None
+    net_proceeds: Optional[Decimal] = None
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class OrderFailedEvent(DomainEvent):
+    """
+    Order sync failed.
+    
+    Contains error information for debugging.
+    Consumers: Error Handler, Notification Agent, Retry Agent
+    """
+    
+    order_id: str = ""
+    error_type: str = ""
+    error_message: str = ""
+    error_details: Optional[str] = None
+    step_failed: str = ""
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class NotificationSentEvent(DomainEvent):
+    """
+    Notification sent (success or error).
+    
+    Integration: 10.4 Telegram Notifications
+    Channels: Telegram, Email, Webhook
+    """
+    
+    order_id: str = ""
+    notification_type: str = ""  # success, error, warning
+    channel: str = ""  # telegram, email, webhook
+    success: bool = True
+    
+    def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+Step 1.4: Update Events init.py
+ملف: core/domain/events/__init__.py
+python"""Domain events for Event Sourcing and Event Bus."""
+from .base import DomainEvent
+from .order_events import (
+    OrderCreatedEvent,
+    FinancialsExtractedEvent,
+    OrderValidatedEvent,
+    OrderSavedEvent,
+    InvoiceCreatedEvent,
+    OrderSyncedEvent,
+    OrderFailedEvent,
+    NotificationSentEvent,
+)
+
+__all__ = [
+    "DomainEvent",
+    "OrderCreatedEvent",
+    "FinancialsExtractedEvent",
+    "OrderValidatedEvent",
+    "OrderSavedEvent",
+    "InvoiceCreatedEvent",
+    "OrderSyncedEvent",
+    "OrderFailedEvent",
+    "NotificationSentEvent",
+]
+
+✅ Checkpoint 1.1: Test Domain Events
+ملف: scripts/test_day1_events.py
+python"""Test Day 1: Domain Events."""
+import sys
+from datetime import datetime
+from decimal import Decimal
+
+# Test imports
+try:
+    from core.domain.events import (
+        OrderCreatedEvent,
+        FinancialsExtractedEvent,
+        OrderValidatedEvent,
+        OrderSyncedEvent,
+    )
+    print("✅ All event imports successful")
+except ImportError as e:
+    print(f"❌ Import failed: {e}")
+    sys.exit(1)
+
+# Test event creation
+try:
+    event = OrderCreatedEvent(
+        order_id="TEST-001",
+        marketplace="amazon",
+        buyer_email="test@example.com",
+        purchase_date=datetime.utcnow().isoformat(),
+        execution_id="exec-123"
+    )
+    
+    print(f"✅ Event created: {event.event_type}")
+    print(f"   - Event ID: {event.event_id}")
+    print(f"   - Aggregate ID: {event.aggregate_id}")
+    print(f"   - Aggregate Type: {event.aggregate_type}")
+    print(f"   - Execution ID: {event.execution_id}")
+    
+except Exception as e:
+    print(f"❌ Event creation failed: {e}")
+    sys.exit(1)
+
+# Test serialization
+try:
+    event_dict = event.to_dict()
+    print(f"\n✅ Event serialization successful")
+    print(f"   Keys: {list(event_dict.keys())}")
+    
+except Exception as e:
+    print(f"❌ Serialization failed: {e}")
+    sys.exit(1)
+
+# Test deserialization
+try:
+    reconstructed = OrderCreatedEvent.from_dict(event_dict)
+    print(f"\n✅ Event deserialization successful")
+    print(f"   Order ID: {reconstructed.order_id}")
+    
+except Exception as e:
+    print(f"❌ Deserialization failed: {e}")
+    sys.exit(1)
+
+print("\n" + "="*60)
+print("✅ DAY 1 - SESSION 1 COMPLETE: Domain Events Working!")
+print("="*60)
+
+🚀 الآن: نفّذ Session 1!
+bashcd /mnt/storage/Konozy_ai
+
+# Run test
+python scripts/test_day1_events.py
+```
+
+---
+
+## 📊 النتيجة المتوقعة
+```
+✅ All event imports successful
+✅ Event created: OrderCreatedEvent
+   - Event ID: 123e4567-e89b-12d3-a456-426614174000
+   - Aggregate ID: TEST-001
+   - Aggregate Type: Order
+   - Execution ID: exec-123
+
+✅ Event serialization successful
+   Keys: ['event_id', 'event_type', 'aggregate_id', ...]
+
+✅ Event deserialization successful
+   Order ID: TEST-001
+
+============================================================
+✅ DAY 1 - SESSION 1 COMPLETE: Domain Events Working!
+============================================================
+
+📋 بعد Session 1
+إذا ✅ PASSED:
+→ نكمل Session 2 (Event Store Implementation)
+إذا ❌ FAILED:
+→ نصلح معاً ثم نكمل
+
+جاهز؟ 🚀
+شغّل Test وأخبرني بالنتيجة!
+بعدها أعطيك Session 2: Event Store Implementation (3 ساعات)Claude is AI and can make mistakes. Please double-check responses.

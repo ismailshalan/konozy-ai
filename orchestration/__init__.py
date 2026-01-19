@@ -9,7 +9,7 @@ from .orchestrator import Orchestrator
 from .workflow import Activity, RetryPolicy, WorkflowDefinition, WorkflowStep
 
 if TYPE_CHECKING:
-    from app.services.execution_service import ExecutionService
+    from core.application.services.execution_service import ExecutionService
 
 __all__ = [
     "Activity",

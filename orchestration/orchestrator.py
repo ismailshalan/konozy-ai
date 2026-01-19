@@ -2,12 +2,12 @@
 
 import asyncio
 
-from app.commands.execution_commands import RecordExecutionCommand
-from app.services.execution_service import ExecutionService
+from datetime import datetime
+from core.application.commands.execution_commands import RecordExecutionCommand
+from core.application.services.execution_service import ExecutionService
 from core.domain.enums.execution_status import ExecutionStatus
-from core.domain.value_objects.execution_id import ExecutionID
-from konozy_sdk.logging import get_logger
-from konozy_sdk.utils.datetime import utc_now
+from core.domain.value_objects import ExecutionID
+from core.infrastructure.logging import get_logger
 
 from .bus import EventBusProtocol
 from .events import Event, EventMetadata
@@ -51,12 +51,10 @@ class Orchestrator:
         Returns:
             WorkflowResult with execution details
         """
-        started_at = utc_now()
+        started_at = datetime.utcnow()
 
         # Generate execution ID
-        execution_id = ExecutionID.generate(
-            service=self._service, operation=self._operation or workflow.name
-        )
+        execution_id = ExecutionID.generate()
 
         # Build execution context
         ctx = ExecutionContext(
@@ -67,12 +65,9 @@ class Orchestrator:
         )
 
         self._logger.info(
-            "workflow_starting",
-            execution_id=execution_id.value,
-            workflow_name=workflow.name,
-            service=self._service,
-            operation=self._operation,
-            step_count=len(workflow.steps),
+            f"workflow_starting: execution_id={execution_id.value}, "
+            f"workflow_name={workflow.name}, service={self._service}, "
+            f"operation={self._operation}, step_count={len(workflow.steps)}"
         )
 
         # Publish workflow.started event
@@ -95,16 +90,14 @@ class Orchestrator:
                 # Step failed - stop workflow
                 workflow_succeeded = False
                 self._logger.warning(
-                    "workflow_step_failed",
-                    execution_id=execution_id.value,
-                    step_name=step.name,
-                    error=step_result.error,
+                    f"workflow_step_failed: execution_id={execution_id.value}, "
+                    f"step_name={step.name}, error={step_result.error}"
                 )
                 break
 
             last_result = step_result.output
 
-        finished_at = utc_now()
+        finished_at = datetime.utcnow()
 
         # Determine final status
         final_status = ExecutionStatus.SUCCESS if workflow_succeeded else ExecutionStatus.FAILED
@@ -143,12 +136,11 @@ class Orchestrator:
             },
         )
 
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
         self._logger.info(
-            "workflow_finished",
-            execution_id=execution_id.value,
-            workflow_name=workflow.name,
-            status=final_status.value,
-            duration_ms=int((finished_at - started_at).total_seconds() * 1000),
+            f"workflow_finished: execution_id={execution_id.value}, "
+            f"workflow_name={workflow.name}, status={final_status.value}, "
+            f"duration_ms={duration_ms}"
         )
 
         return result
@@ -166,7 +158,7 @@ class Orchestrator:
         Returns:
             StepResult with execution details
         """
-        step_started_at = utc_now()
+        step_started_at = datetime.utcnow()
         step_name = step.name
         policy = step.retry_policy
 
@@ -188,7 +180,7 @@ class Orchestrator:
                 output = await step.activity(ctx, input_)
 
                 # Success - calculate duration
-                step_finished_at = utc_now()
+                step_finished_at = datetime.utcnow()
                 duration_ms = int((step_finished_at - step_started_at).total_seconds() * 1000)
 
                 step_result = StepResult(
@@ -211,12 +203,9 @@ class Orchestrator:
             except Exception as exc:
                 last_error = exc
                 self._logger.warning(
-                    "step_attempt_failed",
-                    execution_id=ctx.execution_id.value,
-                    step_name=step_name,
-                    attempt=attempt,
-                    max_attempts=policy.max_attempts,
-                    error=str(exc),
+                    f"step_attempt_failed: execution_id={ctx.execution_id.value}, "
+                    f"step_name={step_name}, attempt={attempt}, "
+                    f"max_attempts={policy.max_attempts}, error={str(exc)}"
                 )
 
                 # If we have more attempts, wait before retry
@@ -225,7 +214,7 @@ class Orchestrator:
                         await asyncio.sleep(policy.backoff_seconds)
 
         # All attempts failed
-        step_finished_at = utc_now()
+        step_finished_at = datetime.utcnow()
         duration_ms = int((step_finished_at - step_started_at).total_seconds() * 1000)
 
         error_str = str(last_error) if last_error else "Unknown error"
@@ -265,7 +254,7 @@ class Orchestrator:
             execution_id=execution_id.value,
             service=self._service,
             operation=self._operation,
-            timestamp=utc_now(),
+            timestamp=datetime.utcnow(),
         )
         event = Event(name=name, payload=payload, metadata=metadata)
         await self._event_bus.publish(event)

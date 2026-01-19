@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.commands.execution_commands import RecordExecutionCommand
-from app.dto.execution_dto import ExecutionDTO
+from core.application.commands.execution_commands import RecordExecutionCommand
+from core.application.dtos.execution_dto import ExecutionDTO
 from core.domain.enums.execution_status import ExecutionStatus
-from core.domain.value_objects.execution_id import ExecutionID
+from core.domain.value_objects import ExecutionID
 from orchestration.models import ExecutionContext
 from orchestration.orchestrator import Orchestrator
 from orchestration.workflow import RetryPolicy, WorkflowDefinition, WorkflowStep

@@ -1,0 +1,54 @@
+يا Cursor، نفّذ الآن:
+خطوة 1: Architecture Validation
+bashcd /mnt/storage/Konozy_ai
+
+python3 << 'EOF'
+import ast
+import sys
+from pathlib import Path
+
+prohibited = ['sqlalchemy', 'pydantic', 'fastapi']
+violations = []
+
+for file in Path('core/domain').rglob('*.py'):
+    with open(file) as f:
+        tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if any(p in (node.module or '') for p in prohibited):
+                    violations.append(f'{file}: {node.module}')
+
+if violations:
+    print("❌ VIOLATIONS:", violations)
+    sys.exit(1)
+
+print("✅ Domain Purity: 100% (0 violations)")
+EOF
+خطوة 2: Run All Tests
+bashcd /mnt/storage/Konozy_ai
+
+# Run all tests
+pytest tests/ -v --tb=short
+
+# Generate summary
+echo ""
+echo "================================"
+echo "PHASE 6 COMPLETION REPORT"
+echo "================================"
+pytest tests/ --collect-only | grep "test session starts" -A 20
+```
+
+---
+
+## ✅ PHASE 6 Acceptance Criteria
+
+عند الانتهاء، يجب أن ترى:
+```
+✅ Multi-item order support: Working
+✅ Fee Mapper: extract_sku_to_principal() added
+✅ Odoo Mapper: Updated to accept sku_to_principal
+✅ Order Entity: Updated to_odoo_invoice_lines()
+✅ New tests: test_multi_item_orders.py (all passing)
+✅ Parity tests: Updated and passing
+✅ Integration tests: Clean (no failures)
+✅ Architecture: 0 violations

@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from core.domain.entities.order import Order
 from core.domain.repositories.order_repository import OrderRepository
@@ -55,7 +56,9 @@ class SqlAlchemyOrderRepository(OrderRepository):
             Order if found, None otherwise
         """
         result = await self._session.execute(
-            select(OrderModel).where(OrderModel.order_id == order_id.value)
+            select(OrderModel)
+            .options(selectinload(OrderModel.items))
+            .where(OrderModel.order_id == order_id.value)
         )
         model = result.scalar_one_or_none()
 
@@ -73,7 +76,11 @@ class SqlAlchemyOrderRepository(OrderRepository):
         Returns:
             List of Order aggregates
         """
-        result = await self._session.execute(select(OrderModel).limit(limit))
+        result = await self._session.execute(
+            select(OrderModel)
+            .options(selectinload(OrderModel.items))
+            .limit(limit)
+        )
         models = result.scalars().all()
 
         return [OrderMapper.to_domain(model) for model in models]

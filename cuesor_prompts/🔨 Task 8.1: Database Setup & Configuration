@@ -1,0 +1,440 @@
+يا Cursor، نفّذ الآن:
+Step 1: Install dependencies
+bashcd /mnt/storage/Konozy_ai
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Install database dependencies
+pip install sqlalchemy psycopg2-binary alembic asyncpg --break-system-packages
+
+# Verify installation
+python -c "import sqlalchemy; print(f'SQLAlchemy: {sqlalchemy.__version__}')"
+python -c "import alembic; print(f'Alembic: {alembic.__version__}')"
+
+Step 2: Database Configuration
+ملف: core/infrastructure/database/__init__.py
+python"""Database infrastructure."""
+ملف: core/infrastructure/database/config.py
+python"""
+Database configuration.
+
+Manages database connection settings and engine creation.
+"""
+from typing import Optional
+from pydantic_settings import BaseSettings
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+class DatabaseSettings(BaseSettings):
+    """
+    Database configuration settings.
+    
+    Loaded from environment variables or .env file.
+    """
+    
+    # Database URL
+    database_url: str = "postgresql+asyncpg://konozy:konozy123@localhost:5432/konozy_db"
+    
+    # Connection pool settings
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    pool_recycle: int = 3600  # 1 hour
+    
+    # Echo SQL (for debugging)
+    echo_sql: bool = False
+    
+    class Config:
+        env_file = ".env"
+        env_prefix = "DB_"
+
+
+# Global settings instance
+settings = DatabaseSettings()
+
+
+# =============================================================================
+# ENGINE CREATION
+# =============================================================================
+
+def create_engine() -> AsyncEngine:
+    """
+    Create async SQLAlchemy engine.
+    
+    Returns:
+        Configured async engine
+    """
+    logger.info(f"Creating database engine: {settings.database_url.split('@')[1]}")
+    
+    engine = create_async_engine(
+        settings.database_url,
+        echo=settings.echo_sql,
+        pool_size=settings.pool_size,
+        max_overflow=settings.max_overflow,
+        pool_timeout=settings.pool_timeout,
+        pool_recycle=settings.pool_recycle,
+        pool_pre_ping=True,  # Test connections before using
+    )
+    
+    return engine
+
+
+# Global engine instance
+engine: Optional[AsyncEngine] = None
+
+
+def get_engine() -> AsyncEngine:
+    """
+    Get or create global engine instance.
+    
+    Returns:
+        Global async engine
+    """
+    global engine
+    
+    if engine is None:
+        engine = create_engine()
+    
+    return engine
+
+
+# =============================================================================
+# SESSION FACTORY
+# =============================================================================
+
+AsyncSessionLocal = sessionmaker(
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+
+async def get_session() -> AsyncSession:
+    """
+    Get database session.
+    
+    Yields:
+        Async database session
+    """
+    engine = get_engine()
+    
+    async with AsyncSessionLocal(bind=engine) as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
+# =============================================================================
+# DATABASE INITIALIZATION
+# =============================================================================
+
+async def init_database():
+    """
+    Initialize database.
+    
+    Creates all tables if they don't exist.
+    """
+    from core.infrastructure.database.models import Base
+    
+    logger.info("Initializing database...")
+    
+    engine = get_engine()
+    
+    async with engine.begin() as conn:
+        # Create all tables
+        await conn.run_sync(Base.metadata.create_all)
+    
+    logger.info("✅ Database initialized successfully")
+
+
+async def close_database():
+    """Close database connections."""
+    global engine
+    
+    if engine:
+        logger.info("Closing database connections...")
+        await engine.dispose()
+        engine = None
+        logger.info("✅ Database connections closed")
+
+Step 3: Environment Configuration
+ملف: .env.example
+bash# Database Configuration
+DB_DATABASE_URL=postgresql+asyncpg://konozy:konozy123@localhost:5432/konozy_db
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_TIMEOUT=30
+DB_POOL_RECYCLE=3600
+DB_ECHO_SQL=false
+
+# API Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+API_RELOAD=true
+
+# Odoo Configuration
+ODOO_URL=http://localhost:8069
+ODOO_DB=odoo_db
+ODOO_USERNAME=admin
+ODOO_PASSWORD=admin
+
+# Logging
+LOG_LEVEL=INFO
+
+🔨 Task 8.2: SQLAlchemy Models
+ملف: core/infrastructure/database/models.py
+python"""
+SQLAlchemy ORM Models.
+
+Maps domain entities to database tables.
+"""
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional
+from sqlalchemy import (
+    Column, String, DateTime, Integer, Numeric, 
+    Text, Boolean, Index, ForeignKey
+)
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import declarative_base, relationship
+import uuid
+
+
+Base = declarative_base()
+
+
+# =============================================================================
+# ORDER MODEL
+# =============================================================================
+
+class OrderModel(Base):
+    """
+    Order database model.
+    
+    Stores order information with financial data.
+    """
+    
+    __tablename__ = "orders"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Order identifiers
+    order_id = Column(String(255), unique=True, nullable=False, index=True)
+    execution_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    
+    # Order metadata
+    marketplace = Column(String(50), nullable=False, index=True)
+    purchase_date = Column(DateTime, nullable=False)
+    buyer_email = Column(String(255), nullable=True)
+    
+    # Order status
+    order_status = Column(String(50), nullable=False, default="Pending", index=True)
+    error_message = Column(Text, nullable=True)
+    
+    # Financial data (denormalized for performance)
+    principal_amount = Column(Numeric(15, 2), nullable=True)
+    principal_currency = Column(String(3), nullable=True)
+    net_proceeds_amount = Column(Numeric(15, 2), nullable=True)
+    net_proceeds_currency = Column(String(3), nullable=True)
+    
+    # Full financial breakdown (stored as JSON)
+    financial_breakdown = Column(JSONB, nullable=True)
+    
+    # Odoo integration
+    odoo_invoice_id = Column(Integer, nullable=True, index=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Soft delete
+    deleted_at = Column(DateTime, nullable=True)
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+    
+    # Relationships
+    items = relationship("OrderItemModel", back_populates="order", cascade="all, delete-orphan")
+    financial_lines = relationship("FinancialLineModel", back_populates="order", cascade="all, delete-orphan")
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_orders_marketplace_status', 'marketplace', 'order_status'),
+        Index('ix_orders_purchase_date', 'purchase_date'),
+        Index('ix_orders_created_at', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<OrderModel(id={self.id}, order_id={self.order_id}, status={self.order_status})>"
+
+
+# =============================================================================
+# ORDER ITEM MODEL
+# =============================================================================
+
+class OrderItemModel(Base):
+    """
+    Order item database model.
+    
+    Stores individual items in an order (for multi-SKU support).
+    """
+    
+    __tablename__ = "order_items"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Foreign key
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, index=True)
+    
+    # Item details
+    sku = Column(String(255), nullable=False, index=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    
+    # Item financials
+    principal_amount = Column(Numeric(15, 2), nullable=False)
+    principal_currency = Column(String(3), nullable=False)
+    
+    # Product metadata
+    product_name = Column(String(500), nullable=True)
+    odoo_product_id = Column(Integer, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    order = relationship("OrderModel", back_populates="items")
+    
+    def __repr__(self):
+        return f"<OrderItemModel(id={self.id}, sku={self.sku}, quantity={self.quantity})>"
+
+
+# =============================================================================
+# FINANCIAL LINE MODEL
+# =============================================================================
+
+class FinancialLineModel(Base):
+    """
+    Financial line database model.
+    
+    Stores individual fee/charge lines (commission, FBA fees, etc.).
+    """
+    
+    __tablename__ = "financial_lines"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Foreign key
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, index=True)
+    
+    # Line details
+    line_type = Column(String(100), nullable=False, index=True)
+    description = Column(String(500), nullable=False)
+    
+    # Amount
+    amount = Column(Numeric(15, 2), nullable=False)
+    currency = Column(String(3), nullable=False)
+    
+    # Associated SKU (if applicable)
+    sku = Column(String(255), nullable=True)
+    
+    # Odoo mapping
+    odoo_account_id = Column(Integer, nullable=True)
+    odoo_analytic_id = Column(Integer, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    order = relationship("OrderModel", back_populates="financial_lines")
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_financial_lines_type', 'line_type'),
+    )
+    
+    def __repr__(self):
+        return f"<FinancialLineModel(id={self.id}, type={self.line_type}, amount={self.amount})>"
+
+
+# =============================================================================
+# EVENT STORE MODEL (for Event Sourcing - Phase 2)
+# =============================================================================
+
+class EventModel(Base):
+    """
+    Event store model.
+    
+    Stores domain events for event sourcing and audit trail.
+    """
+    
+    __tablename__ = "events"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Event metadata
+    aggregate_id = Column(String(255), nullable=False, index=True)
+    aggregate_type = Column(String(100), nullable=False, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    event_version = Column(Integer, nullable=False, default=1)
+    
+    # Event data
+    event_data = Column(JSONB, nullable=False)
+    
+    # Metadata
+    user_id = Column(String(255), nullable=True)
+    execution_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Sequence number (for ordering)
+    sequence_number = Column(Integer, nullable=False)
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_events_aggregate', 'aggregate_id', 'aggregate_type'),
+        Index('ix_events_type_created', 'event_type', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<EventModel(id={self.id}, type={self.event_type}, aggregate={self.aggregate_id})>"
+```
+
+---
+
+## 📝 ملاحظة مهمة
+
+**هذه البنية تدعم:**
+```
+✅ Multi-SKU orders (OrderItemModel)
+✅ Detailed financial breakdown (FinancialLineModel)
+✅ Soft deletes (deleted_at, is_deleted)
+✅ Audit trail ready (EventModel)
+✅ Performance indexes
+✅ JSONB for flexibility (financial_breakdown)
+✅ UUID primary keys (better for distributed systems)
+✅ Timestamps (created_at, updated_at)
+✅ Relationships (one-to-many)
+
+✅ الآن نكمل
+الخطوات القادمة:
+
+✅ Repository Implementation (التالي)
+✅ Unit of Work Pattern
+✅ Alembic Migrations
+✅ Integration & Testing
+
+جاهز للمتابعة؟ 🚀
+سأنتظر تأكيدك لأكمل مع:
+
+Task 8.3: Repository Implementation

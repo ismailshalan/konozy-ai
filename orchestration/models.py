@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from core.domain.enums.execution_status import ExecutionStatus
-from core.domain.value_objects.execution_id import ExecutionID
+from core.domain.value_objects import ExecutionID
 
 
 @dataclass

@@ -6,8 +6,14 @@ set -e
 
 echo "🔍 Running Konozy AI Architecture Validation..."
 
-# 1. Domain Purity Check
-echo "Checking domain purity..."
+# Check if core/domain directory exists
+if [ ! -d "core/domain" ]; then
+    echo "❌ ERROR: core/domain directory not found"
+    exit 1
+fi
+
+# 1. Domain Purity Check (AST-based)
+echo "Checking domain purity (AST analysis)..."
 python3 -c "
 import ast
 import sys
@@ -20,14 +26,23 @@ for file in Path('core/domain').rglob('*.py'):
     if file.name == '__init__.py':
         continue
     try:
-        with open(file) as f:
-            tree = ast.parse(f.read())
+        with open(file, encoding='utf-8') as f:
+            tree = ast.parse(f.read(), filename=str(file))
             for node in ast.walk(tree):
+                # Check ImportFrom statements (from X import Y)
                 if isinstance(node, ast.ImportFrom):
                     if node.module and any(p in node.module for p in prohibited):
                         violations.append(f'{file}: imports {node.module}')
+                # Check Import statements (import X)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if any(p in alias.name for p in prohibited):
+                            violations.append(f'{file}: imports {alias.name}')
+    except SyntaxError as e:
+        print(f'❌ Syntax error in {file}: {e}')
+        sys.exit(1)
     except Exception as e:
-        print(f'Error parsing {file}: {e}')
+        print(f'❌ Error parsing {file}: {e}')
         sys.exit(1)
 
 if violations:
@@ -36,23 +51,30 @@ if violations:
         print(f'  - {v}')
     sys.exit(1)
 else:
-    print('✅ Domain purity validated')
+    print('✅ Domain purity validated (AST)')
 "
 
-# 2. Grep-based checks for additional safety
+# 2. Grep-based checks for additional safety (catches edge cases)
 echo "Running grep-based validation..."
-if grep -r "from sqlalchemy" core/domain/ 2>/dev/null; then
-    echo "❌ VIOLATION DETECTED: SQLAlchemy import found in core/domain/"
-    exit 1
-fi
+violations_found=0
 
-if grep -r "from pydantic" core/domain/ 2>/dev/null; then
-    echo "❌ VIOLATION DETECTED: Pydantic import found in core/domain/"
-    exit 1
-fi
+# Check for "from X import" patterns
+for framework in sqlalchemy pydantic fastapi; do
+    if grep -r "from ${framework}" core/domain/ 2>/dev/null; then
+        echo "❌ VIOLATION DETECTED: ${framework^} import found in core/domain/"
+        violations_found=1
+    fi
+done
 
-if grep -r "from fastapi" core/domain/ 2>/dev/null; then
-    echo "❌ VIOLATION DETECTED: FastAPI import found in core/domain/"
+# Check for "import X" patterns (including "import X as Y")
+for framework in sqlalchemy pydantic fastapi; do
+    if grep -rE "^import ${framework}( |$| as)" core/domain/ 2>/dev/null; then
+        echo "❌ VIOLATION DETECTED: ${framework^} import found in core/domain/"
+        violations_found=1
+    fi
+done
+
+if [ $violations_found -eq 1 ]; then
     exit 1
 fi
 
