@@ -160,3 +160,34 @@ async def get_order(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get order: {str(e)}"
         )
+# =============================================================================
+# SYNC ORDERS (LEGACY ENDPOINT FOR TEST COMPATIBILITY)
+# =============================================================================
+
+from api.dependencies import get_order_service
+from core.application.services.amazon_sync_service import AmazonSyncService
+
+@router.post(
+    "/sync",
+    status_code=status.HTTP_200_OK,
+    summary="Trigger full order sync",
+    description="Runs full Amazon order sync and returns summary"
+)
+async def sync_orders(
+    service: AmazonSyncService = Depends(get_order_service)
+):
+    """
+    Legacy-compatible sync endpoint used by integration tests.
+    """
+    try:
+        result = service.sync()
+        return {
+            "status": "ok",
+            "synced": result
+        }
+    except Exception as e:
+        logger.error(f"Sync failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync orders: {str(e)}"
+        )
