@@ -150,3 +150,35 @@ async def test_list_orders(test_client: TestClient):
     orders = response.json()
     assert isinstance(orders, list)
     assert len(orders) >= 3  # At least the 3 we just created
+
+
+@pytest.mark.asyncio
+async def test_sync_orders(test_client: TestClient):
+    """Test POST /api/v1/orders/sync endpoint."""
+    # Make POST request to sync endpoint
+    response = test_client.post("/api/v1/orders/sync", json={})
+    
+    # Verify HTTP response
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    
+    # Parse response
+    body = response.json()
+    
+    # Verify response structure
+    assert "execution_id" in body, "Response must contain execution_id"
+    assert "status" in body, "Response must contain status"
+    assert "message" in body, "Response must contain message"
+    
+    # Verify execution_id is valid
+    assert body["execution_id"] is not None
+    assert isinstance(body["execution_id"], str)
+    assert len(body["execution_id"]) > 0
+    
+    # Verify status
+    assert body["status"] == "started", f"Expected status 'started', got '{body['status']}'"
+    
+    # Verify message
+    assert "started successfully" in body["message"].lower()
+    
+    # Verify marketplace (default should be "amazon")
+    assert body.get("marketplace") == "amazon"

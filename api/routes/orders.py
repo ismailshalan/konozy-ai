@@ -161,33 +161,144 @@ async def get_order(
             detail=f"Failed to get order: {str(e)}"
         )
 # =============================================================================
-# SYNC ORDERS (LEGACY ENDPOINT FOR TEST COMPATIBILITY)
+# SYNC ORDERS ENDPOINT
 # =============================================================================
 
-from api.dependencies import get_order_service
+from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel
+
+from core.domain.value_objects import ExecutionID
+from api.dependencies import get_amazon_sync_service
 from core.application.services.amazon_sync_service import AmazonSyncService
+
+
+class SyncOrdersRequest(BaseModel):
+    """Request model for order sync endpoint."""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    marketplace: str = "amazon"
+
 
 @router.post(
     "/sync",
     status_code=status.HTTP_200_OK,
-    summary="Trigger full order sync",
-    description="Runs full Amazon order sync and returns summary"
+    summary="Trigger order sync",
+    description="""
+    Trigger order synchronization from marketplace.
+    
+    This endpoint generates an execution_id and initiates the sync process.
+    The actual sync may run asynchronously depending on the implementation.
+    
+    **Parameters:**
+    - `start_date`: Optional ISO 8601 date string for filtering orders
+    - `end_date`: Optional ISO 8601 date string for filtering orders
+    - `marketplace`: Marketplace name (default: "amazon")
+    
+    **Returns:**
+    - Execution ID for tracking the sync operation
+    - Status confirmation
+    """
 )
 async def sync_orders(
-    service: AmazonSyncService = Depends(get_order_service)
+    request: Optional[SyncOrdersRequest] = None,
+    service: AmazonSyncService = Depends(get_amazon_sync_service)
 ):
     """
-    Legacy-compatible sync endpoint used by integration tests.
+    Trigger order synchronization.
+    
+    This endpoint generates an execution_id and initiates the sync process.
     """
     try:
-        result = service.sync()
+        # Generate execution_id
+        execution_id = ExecutionID.generate()
+        
+        # Log start of request
+        logger.info(
+            f"[{execution_id}] Order sync request received - "
+            f"marketplace={request.marketplace if request else 'amazon'}, "
+            f"start_date={request.start_date if request else None}, "
+            f"end_date={request.end_date if request else None}"
+        )
+        
+        # Parse dates if provided
+        start_date = None
+        end_date = None
+        
+        if request:
+            if request.start_date:
+                try:
+                    start_date = datetime.fromisoformat(request.start_date.replace('Z', '+00:00'))
+                    logger.info(f"[{execution_id}] Parsed start_date: {start_date}")
+                except ValueError as e:
+                    logger.warning(f"[{execution_id}] Invalid start_date format: {e}")
+            
+            if request.end_date:
+                try:
+                    end_date = datetime.fromisoformat(request.end_date.replace('Z', '+00:00'))
+                    logger.info(f"[{execution_id}] Parsed end_date: {end_date}")
+                except ValueError as e:
+                    logger.warning(f"[{execution_id}] Invalid end_date format: {e}")
+        
+        # Log generated execution_id
+        logger.info(f"[{execution_id}] Execution ID generated: {execution_id}")
+        
+        # Note: The actual sync logic would be triggered here
+        # For now, we return the execution_id to indicate the sync has started
+        # In a full implementation, this would trigger a background job or async task
+        
+        # Parse dates if provided
+        start_date_obj = None
+        end_date_obj = None
+        
+        if request:
+            if request.start_date:
+                try:
+                    start_date_obj = datetime.fromisoformat(request.start_date.replace('Z', '+00:00'))
+                    logger.info(f"[{execution_id}] Parsed start_date: {start_date_obj}")
+                except ValueError as e:
+                    logger.warning(f"[{execution_id}] Invalid start_date format: {e}")
+            
+            if request.end_date:
+                try:
+                    end_date_obj = datetime.fromisoformat(request.end_date.replace('Z', '+00:00'))
+                    logger.info(f"[{execution_id}] Parsed end_date: {end_date_obj}")
+                except ValueError as e:
+                    logger.warning(f"[{execution_id}] Invalid end_date format: {e}")
+        
+        # Call the real sync service
+        logger.info(f"[{execution_id}] Calling AmazonSyncService.sync_orders()")
+        sync_result = await service.sync_orders(
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+            execution_id=execution_id,
+        )
+        
+        # Log final confirmation
+        logger.info(
+            f"[{execution_id}] Order sync completed - "
+            f"total_orders={sync_result.get('total_orders', 0)}, "
+            f"successful={sync_result.get('successful', 0)}, "
+            f"invoices={sync_result.get('created_invoices', 0)}"
+        )
+        
+        # Return response with sync results
         return {
-            "status": "ok",
-            "synced": result
+            "status": "completed",
+            "execution_id": sync_result.get("execution_id", str(execution_id)),
+            "message": "Order sync completed successfully",
+            "marketplace": request.marketplace if request else "amazon",
+            "total_orders": sync_result.get("total_orders", 0),
+            "created_invoices": sync_result.get("created_invoices", 0),
+            "failed_items": sync_result.get("failed_items", []),
+            "successful": sync_result.get("successful", 0),
+            "start_date": request.start_date if request and request.start_date else None,
+            "end_date": request.end_date if request and request.end_date else None,
         }
+    
     except Exception as e:
-        logger.error(f"Sync failed: {e}", exc_info=True)
+        logger.error(f"Sync orders failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync orders: {str(e)}"
+            detail=f"Failed to start order sync: {str(e)}"
         )

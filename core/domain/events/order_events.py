@@ -83,6 +83,28 @@ class OrderStatusChangedEvent(DomainEvent):
 
 
 @dataclass
+class OrderFetchedEvent(DomainEvent):
+    """
+    Order was fetched from marketplace API.
+    
+    Pipeline: 3.1 Order Pipeline
+    Trigger: Order fetched from Amazon SP-API
+    Next: Order mapping and validation
+    """
+    
+    order_id: str = ""
+    marketplace: str = ""
+    buyer_email: str = ""
+    purchase_date: str = ""
+    
+    def __post_init__(self):
+        """Set aggregate_id to order_id."""
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
 class FinancialsExtractedEvent(DomainEvent):
     """
     Financial data extracted from marketplace API.
@@ -219,6 +241,72 @@ class NotificationSentEvent(DomainEvent):
     success: bool = True
     
     def __post_init__(self):
+        if not self.aggregate_id and self.order_id:
+            object.__setattr__(self, 'aggregate_id', self.order_id)
+        super().__post_init__()
+
+
+@dataclass
+class SyncStartedEvent(DomainEvent):
+    """
+    Sync run started.
+    
+    Pipeline: 3.1 Order Pipeline
+    Trigger: sync_orders() called
+    Contains: execution_id, marketplace, date range
+    """
+    
+    marketplace: str = ""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    
+    def __post_init__(self):
+        """Set aggregate_id to execution_id for sync-level events."""
+        if not self.aggregate_id and self.execution_id:
+            object.__setattr__(self, 'aggregate_id', f"sync-{self.execution_id}")
+        super().__post_init__()
+
+
+@dataclass
+class SyncCompletedEvent(DomainEvent):
+    """
+    Sync run completed.
+    
+    Pipeline: 3.1 Order Pipeline
+    Trigger: sync_orders() finished
+    Contains: execution_id, summary statistics
+    """
+    
+    marketplace: str = ""
+    total_orders: int = 0
+    successful: int = 0
+    failed: int = 0
+    invoices_created: int = 0
+    invoices_failed: int = 0
+    
+    def __post_init__(self):
+        """Set aggregate_id to execution_id for sync-level events."""
+        if not self.aggregate_id and self.execution_id:
+            object.__setattr__(self, 'aggregate_id', f"sync-{self.execution_id}")
+        super().__post_init__()
+
+
+@dataclass
+class InvoiceFailedEvent(DomainEvent):
+    """
+    Invoice creation failed for an order.
+    
+    Pipeline: 3.1 Order Pipeline
+    Trigger: Odoo invoice creation error
+    Contains: order_id, error message, execution_id
+    """
+    
+    order_id: str = ""
+    error_message: str = ""
+    error_type: str = "invoice_creation"
+    
+    def __post_init__(self):
+        """Set aggregate_id to order_id."""
         if not self.aggregate_id and self.order_id:
             object.__setattr__(self, 'aggregate_id', self.order_id)
         super().__post_init__()

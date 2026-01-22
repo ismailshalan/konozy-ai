@@ -137,6 +137,28 @@ class MockNotificationService(INotificationService):
         """Get all sent notifications (for testing)."""
         return self.notifications_sent
     
+    async def notify(self, message: str, severity: int = 50) -> None:
+        """
+        Send a generic notification message.
+        
+        Args:
+            message: Notification message
+            severity: Severity level (0-100, higher = more critical)
+        """
+        notification = {
+            "type": "generic",
+            "message": message,
+            "severity": severity,
+        }
+        
+        self.notifications_sent.append(notification)
+        
+        severity_emoji = "🔴" if severity >= 80 else "🟡" if severity >= 50 else "🟢"
+        logger.info(
+            f"{severity_emoji} 🔔 NOTIFICATION (severity={severity}):\n"
+            f"   {message}"
+        )
+    
     def clear(self) -> None:
         """Clear notifications (for testing)."""
         self.notifications_sent.clear()

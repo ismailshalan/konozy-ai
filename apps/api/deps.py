@@ -3,6 +3,10 @@
 from pathlib import Path
 from typing import AsyncGenerator
 
+# Ensure environment variables are loaded ONCE from the canonical location
+# before any Settings objects are created (e.g., OdooClient -> OdooSettings).
+import api.dependencies  # noqa: F401
+
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -14,7 +18,7 @@ from core.data.uow import UnitOfWork, create_uow
 
 # Mock implementations for Amazon sync (can be replaced with real ones)
 from core.infrastructure.adapters.persistence.mock_order_repository import MockOrderRepository
-from core.infrastructure.adapters.odoo.mock_odoo_client import MockOdooClient
+from apps.adapters.odoo.client import OdooClient
 from core.infrastructure.adapters.notifications.mock_notification_service import MockNotificationService
 
 # Database URL - Using SQLite for development (easier setup, no auth required)
@@ -97,11 +101,11 @@ def get_amazon_sync_service() -> AmazonSyncService:
     global _amazon_sync_use_case, _amazon_sync_service
     
     if _amazon_sync_service is None:
-        # Create mock dependencies for now
+        # Create dependencies
         if _amazon_order_repository is None:
             _amazon_order_repository = MockOrderRepository()
         if _amazon_odoo_client is None:
-            _amazon_odoo_client = MockOdooClient()
+            _amazon_odoo_client = OdooClient()  # Real Odoo client
         if _amazon_notification_service is None:
             _amazon_notification_service = MockNotificationService()
         

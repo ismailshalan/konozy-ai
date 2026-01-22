@@ -3,8 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from core.settings.odoo import get_odoo_settings
-from core.settings.base import BaseAppSettings
+from core.settings.modules.odoo_settings import OdooSettings
 
 
 def _get_int(env_name: str, default: int) -> int:
@@ -28,7 +27,7 @@ class odoo_connection_config:
     Adapter-level view فوق OdooSettings.
 
     بدل ما نعتمد على os.getenv مباشرة، بنقرأ من Settings Layer:
-    - core.settings.odoo.OdooSettings
+    - core.settings.modules.odoo_settings.OdooSettings
     """
 
     url: str
@@ -38,18 +37,13 @@ class odoo_connection_config:
 
     @classmethod
     def from_settings(cls) -> "odoo_connection_config":
-        s = get_odoo_settings()
+        s = OdooSettings()
         return cls(
             url=str(s.url),
             db=s.db,
             username=s.username,
             password=s.password,
         )
-
-
-# واحد بس ثابت في الموديول كله – زي القديم
-ODOO_CONN_CFG = odoo_connection_config.from_settings()
-
 
 # ============================================================
 # 2) Accounting / Analytics / Marketplace Config

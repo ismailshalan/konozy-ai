@@ -1,0 +1,168 @@
+# ====================
+# ============================================================
+# ROLLBACK PLAN — Restore original Amazon integration
+# ============================================================
+
+# GOAL:
+# Restore the system to the state BEFORE Cursor started moving:
+# - mapper.py
+# - fee_config.py
+# - amazon_fee_mapper.py
+# - amazon_fee_config.py
+# - removing marketplace/amazon directory
+# - modifying MarketplaceService, AmazonSyncService, sync_amazon_order
+# - modifying imports across the project
+#
+# This rollback restores Konozy AI to the CLEAN architecture:
+#
+#   ✔ Amazon SDK: konozy_sdk.amazon
+#   ✔ Financial Logic: AmazonFinancialSource (ONLY)
+#   ✔ NO mapper in core/infrastructure/adapters
+#   ✔ NO duplicated financial logic
+#   ✔ NO old-project files inside new project
+#   ✔ MarketplaceService uses ONLY AmazonAPI
+#
+# ============================================================
+
+
+# ============================================================
+# STEP 1 — DELETE FILES CREATED BY CURSOR (UNSAFE)
+# ============================================================
+
+DELETE FILE: core/infrastructure/adapters/amazon_fee_mapper.py
+DELETE FILE: core/infrastructure/adapters/amazon_fee_config.py
+
+# ============================================================
+# STEP 2 — RESTORE ORIGINAL DIRECTORY
+# ============================================================
+
+# Restore directory:
+RESTORE FULL DIRECTORY:
+core/infrastructure/marketplace/amazon/
+
+# REQUIRED FILES INSIDE:
+#   client.py
+#   order_client.py
+#   spapi_client.py
+#   legacy_spapi_client.py
+#   amazon_financial_source.py (if existed)
+#   mapper.py  (ONLY if existed before)
+#   fee_config.py (ONLY if existed before)
+#   __init__.py
+
+# If Cursor deleted the directory, reconstruct it using git history or backup.
+# ============================================================
+
+
+# ============================================================
+# STEP 3 — FIX ALL IMPORTS BACK TO ORIGINAL STATE
+# ============================================================
+
+# ============ MarketplaceService.py ============
+REPLACE:
+from konozy_sdk.amazon.orders import AmazonOrderParser as AmazonOrderMapper
+WITH:
+from core.infrastructure.marketplace.amazon.order_client import AmazonOrderClient
+
+REPLACE:
+from konozy_sdk.amazon.client import AmazonAPI
+WITH:
+from core.infrastructure.marketplace.amazon.client import AmazonAPI
+
+
+# ============ sync_amazon_order.py ============
+REPLACE:
+from core.infrastructure.adapters.amazon_fee_mapper import AmazonFeeMapper
+WITH:
+from core.infrastructure.marketplace.amazon.mapper import AmazonFeeMapper
+
+
+# ============ amazon_sync_service.py ============
+REPLACE:
+from konozy_sdk.amazon.client import AmazonAPI
+WITH:
+from core.infrastructure.marketplace.amazon.client import AmazonAPI
+
+REPLACE:
+from core.infrastructure.adapters.amazon_fee_mapper import AmazonFeeMapper
+WITH:
+from core.infrastructure.marketplace.amazon.mapper import AmazonFeeMapper
+
+
+# ============ api/dependencies.py ============
+REPLACE ALL:
+get_amazon_api()
+WITH:
+get_spapi_client()
+AND:
+get_amazon_order_client()
+
+
+# ============ redis_stream_consumer.py ============
+REPLACE:
+from core.infrastructure.adapters.amazon_fee_mapper import AmazonFeeMapper
+WITH:
+from core.infrastructure.marketplace.amazon.mapper import AmazonFeeMapper
+
+
+# ============ TEST FILES ============
+(restore imports exactly as before the migration)
+# ============================================================
+
+
+# ============================================================
+# STEP 4 — REMOVE ILLEGAL STATIC METHODS ADDED BY CURSOR
+# ============================================================
+
+REMOVE from mapper.py IF Cursor added:
+
+- parse_financial_events()
+- extract_sku_to_principal()
+- map_amazon_order_to_domain()
+
+These were NEVER part of the old system and break financial parity.
+# ============================================================
+
+
+# ============================================================
+# STEP 5 — RESTORE AMAZON FINANCIAL SOURCE AS THE ONLY ENGINE
+# ============================================================
+
+AmazonFinancialSource (inside SDK) must remain the ONLY class used for:
+
+- Parsing fees
+- Parsing charges
+- Promotions
+- Principal extraction
+- Date extraction
+- SKU resolution
+- Line building
+
+NO duplicate logic allowed in project core.
+
+# ============================================================
+
+
+# ============================================================
+# STEP 6 — VERIFY FINAL STATE
+# ============================================================
+
+AFTER rollback, verify:
+
+✔ core/infrastructure/marketplace/amazon exists  
+✔ NO amazon_fee_mapper.py in adapters  
+✔ NO amazon_fee_config.py in adapters  
+✔ MarketplaceService uses AmazonAPI from original location  
+✔ AmazonSyncService uses original clients  
+✔ sync_amazon_order imports original mapper  
+✔ All tests import original location  
+✔ SDK remains untouched  
+✔ FinancialSource from SDK is the ONLY financial processor  
+✔ No duplicate code exists anywhere in the project  
+✔ No static methods invented by Cursor remain  
+✔ No folder was removed by mistake  
+✔ No business logic changed  
+✔ No dependency graph was modified  
+# ============================================================
+
+# END OF ROLLBACK PLAN

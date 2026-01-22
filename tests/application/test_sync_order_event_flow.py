@@ -23,7 +23,7 @@ from core.domain.value_objects import OrderNumber, ExecutionID, Money, Financial
 from core.domain.repositories.order_repository import OrderRepository
 from core.domain.event_bus import EventBus
 from core.infrastructure.database.event_store import EventStore
-from core.infrastructure.database.config import init_database, get_session_factory, close_database
+from core.infrastructure.database.lifecycle import init_database, get_session_factory, close_database
 
 
 @pytest_asyncio.fixture

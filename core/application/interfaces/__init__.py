@@ -93,6 +93,17 @@ class INotificationService(ABC):
             details: Optional error details
         """
         pass
+    
+    async def notify(self, message: str, severity: int = 50) -> None:
+        """
+        Send a generic notification message.
+        
+        Args:
+            message: Notification message
+            severity: Severity level (0-100, higher = more critical)
+        """
+        # Default implementation - can be overridden
+        pass
 
 
 __all__ = ["IOdooClient", "INotificationService"]

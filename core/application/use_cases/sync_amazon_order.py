@@ -14,7 +14,7 @@ Flow:
 6. Handle errors gracefully
 """
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from decimal import Decimal
 from datetime import datetime
 import logging
@@ -25,10 +25,13 @@ from core.domain.value_objects import (
     ExecutionID,
     Money,
     FinancialBreakdown,
+    FinancialLine,
+    AmazonFeeType,
+    OdooAccountMapping,
 )
 from core.domain.repositories.order_repository import OrderRepository
 from core.domain.event_bus import EventBus
-from core.infrastructure.adapters.amazon.fee_mapper import AmazonFeeMapper
+from konozy_sdk.amazon import AmazonAPI, AmazonFinancialSource
 from core.infrastructure.adapters.odoo.odoo_financial_mapper import OdooFinancialMapper
 from core.application.interfaces import IOdooClient, INotificationService
 from core.infrastructure.database.snapshot_store import SnapshotStore
@@ -158,13 +161,107 @@ class SyncAmazonOrderUseCase:
         
         try:
             # ================================================================
-            # STEP 1: Extract Financial Breakdown
+            # STEP 1: Extract Financial Breakdown using AmazonFinancialSource
             # ================================================================
             logger.info(f"[{execution_id}] Step 1: Extracting financial data")
             
-            breakdown = AmazonFeeMapper.parse_financial_events(
-                financial_events=request.financial_events,
-                order_id=request.amazon_order_id
+            # Initialize AmazonFinancialSource with AmazonAPI
+            amazon_api = AmazonAPI()
+            financial_source = AmazonFinancialSource(amazon_api=amazon_api)
+            
+            # Convert financial_events to list format if needed
+            if isinstance(request.financial_events, dict):
+                events_list = [request.financial_events]
+            else:
+                events_list = request.financial_events
+            
+            # Build financial lines using AmazonFinancialSource
+            financial_lines_raw, reimbursements_raw = financial_source.build_financial_lines_for_order(
+                amazon_order_id=request.amazon_order_id,
+                raw_financial_events=events_list
+            )
+            
+            # Convert to FinancialBreakdown domain object
+            principal_total = Decimal("0.00")
+            principal_currency = "EGP"
+            posted_dates = []
+            financial_lines: List[FinancialLine] = []
+            
+            for line in financial_lines_raw:
+                # Extract principal metadata
+                if "_principal_total" in line:
+                    principal_total = Decimal(str(line["_principal_total"]))
+                    principal_currency = line.get("_principal_currency", "EGP")
+                    continue
+                
+                # Extract posted dates
+                if "_posted_dates" in line:
+                    posted_dates = line["_posted_dates"]
+                    continue
+                
+                # Skip metadata lines
+                if line.get("code", "").startswith("_"):
+                    continue
+                
+                # Convert to FinancialLine
+                amount = Decimal(str(line["amount"]))
+                currency = line.get("currency", "EGP")
+                code = line.get("code", "UNKNOWN")
+                
+                # Determine line type
+                if "FEE" in code.upper() or "COMMISSION" in code.upper():
+                    line_type = "fee"
+                elif "CHARGE" in code.upper() or "SHIPPING" in code.upper():
+                    line_type = "charge"
+                elif "PROMO" in code.upper() or "REBATE" in code.upper():
+                    line_type = "promo"
+                else:
+                    line_type = "fee"
+                
+                # Map fee type
+                fee_type = None
+                if "COMMISSION" in code.upper() or "REFERRAL" in code.upper():
+                    fee_type = AmazonFeeType.COMMISSION
+                elif "FBA" in code.upper():
+                    fee_type = AmazonFeeType.FBA_FULFILLMENT
+                elif "SHIPPING" in code.upper():
+                    fee_type = AmazonFeeType.SHIPPING_CHARGE
+                elif "PROMO" in code.upper():
+                    fee_type = AmazonFeeType.PROMO_REBATE
+                
+                financial_lines.append(
+                    FinancialLine(
+                        line_type=line_type,
+                        fee_type=fee_type,
+                        amount=Money(amount=amount, currency=currency),
+                        description=line.get("name", code),
+                        sku=line.get("sku"),
+                        odoo_mapping=None,  # Will be set by OdooFinancialMapper
+                    )
+                )
+            
+            # Calculate net proceeds
+            total_lines = sum(line.amount.amount for line in financial_lines)
+            net_proceeds = Money(
+                amount=principal_total + total_lines,
+                currency=principal_currency
+            )
+            
+            # Parse posted date
+            posted_date = None
+            if posted_dates:
+                try:
+                    from konozy_sdk.amazon.financial_source import parse_posted_date
+                    posted_date = parse_posted_date(posted_dates[0])
+                except Exception:
+                    pass
+            
+            # Create FinancialBreakdown
+            breakdown = FinancialBreakdown(
+                principal=Money(amount=principal_total, currency=principal_currency),
+                financial_lines=financial_lines,
+                net_proceeds=net_proceeds,
+                posted_date=posted_date,
             )
             
             logger.info(
@@ -174,9 +271,27 @@ class SyncAmazonOrderUseCase:
             )
             
             # Extract SKU-level principal (for multi-item orders)
-            sku_to_principal = AmazonFeeMapper.extract_sku_to_principal(
-                request.financial_events
-            )
+            sku_to_principal: Dict[str, Decimal] = {}
+            if isinstance(request.financial_events, dict):
+                events_dict = request.financial_events
+            else:
+                events_dict = events_list[0] if events_list else {}
+            
+            shipment_events = events_dict.get("ShipmentEventList", [])
+            for shipment in shipment_events:
+                shipment_items = shipment.get("ShipmentItemList", [])
+                for item in shipment_items:
+                    sku = item.get("SellerSKU", "")
+                    if not sku:
+                        continue
+                    item_charges = item.get("ItemChargeList", [])
+                    for charge in item_charges:
+                        if charge.get("ChargeType") == "Principal":
+                            amount_dict = charge.get("ChargeAmount", {})
+                            amount = Decimal(str(amount_dict.get("CurrencyAmount", 0.0)))
+                            if amount > 0:
+                                sku_to_principal[sku] = sku_to_principal.get(sku, Decimal("0")) + amount
+                            break
             
             logger.info(
                 f"[{execution_id}] SKU-level principal: "

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from apps.api.main import app
+from api.main import app
 from core.data.models.base import Base
 from core.application.services.order_service import OrderApplicationService
 
@@ -67,7 +67,7 @@ async def test_session(test_session_factory) -> AsyncGenerator[AsyncSession, Non
 @pytest.fixture
 def test_client(test_session_factory) -> TestClient:
     """Create FastAPI test client with test database session."""
-    from apps.api.deps import get_order_service
+    from api.dependencies import get_order_service
     
     # Override dependency
     def override_get_order_service():

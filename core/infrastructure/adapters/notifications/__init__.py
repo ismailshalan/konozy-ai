@@ -1,4 +1,8 @@
-"""Notification adapters."""
-from .mock_notification_service import MockNotificationService
+"""Notification adapters.
 
-__all__ = ["MockNotificationService"]
+Keep this package import-light: avoid importing network-backed implementations
+at module import time (e.g., aiohttp-based adapters). Import concrete services
+directly from their modules when needed.
+"""
+
+__all__ = []

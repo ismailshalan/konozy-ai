@@ -7,8 +7,8 @@ from typing import List, Optional
 from core.application.dtos.order_dto import OrderDTO
 from core.application.services.order_service import OrderApplicationService
 from core.domain.value_objects import ExecutionID
-from core.infrastructure.marketplace.amazon.client import AmazonClient
-from core.infrastructure.marketplace.amazon.mapper import AmazonOrderMapper
+from konozy_sdk.amazon.client import AmazonAPI
+from konozy_sdk.amazon.orders import AmazonOrderParser as AmazonOrderMapper
 
 
 class MarketplaceService:
@@ -24,13 +24,13 @@ class MarketplaceService:
     def __init__(
         self,
         order_service: OrderApplicationService,
-        amazon_client: Optional[AmazonClient] = None,
+        amazon_client: Optional[AmazonAPI] = None,
     ) -> None:
         """Initialize marketplace service.
 
         Args:
             order_service: OrderApplicationService instance
-            amazon_client: Optional AmazonClient instance
+            amazon_client: Optional AmazonAPI instance
         """
         self._order_service = order_service
         self._amazon_client = amazon_client
@@ -51,8 +51,74 @@ class MarketplaceService:
         # Generate execution ID for this sync operation
         execution_id = ExecutionID.generate()
 
-        # Convert Amazon data to domain entity
-        order = AmazonOrderMapper.to_domain_order(amazon_order_data, execution_id)
+        # Convert Amazon data to domain entity using SDK
+        from konozy_sdk.amazon.orders import AmazonOrderParser
+        from core.domain.entities.order import Order, OrderItem
+        from core.domain.value_objects import OrderNumber, Money
+        from datetime import datetime
+        from decimal import Decimal
+        
+        # Extract order data
+        amazon_order_id = amazon_order_data.get("AmazonOrderId")
+        if not amazon_order_id:
+            raise ValueError("AmazonOrderId is required")
+        
+        purchase_date_str = amazon_order_data.get("PurchaseDate")
+        if not purchase_date_str:
+            raise ValueError("PurchaseDate is required")
+        
+        # Parse purchase date
+        try:
+            purchase_date = datetime.fromisoformat(purchase_date_str.replace("Z", "+00:00"))
+        except Exception:
+            purchase_date = datetime.utcnow()
+        
+        buyer_email = amazon_order_data.get("BuyerInfo", {}).get("BuyerEmail")
+        order_status = amazon_order_data.get("OrderStatus", "Pending")
+        
+        # Extract order total
+        order_total = None
+        if "OrderTotal" in amazon_order_data:
+            total_dict = amazon_order_data["OrderTotal"]
+            order_total = Money(
+                amount=Decimal(str(total_dict.get("Amount", "0.00"))),
+                currency=total_dict.get("CurrencyCode", "EGP")
+            )
+        
+        # Extract order items
+        items = []
+        order_items = amazon_order_data.get("OrderItems", [])
+        for item_data in order_items:
+            item_total = None
+            if "ItemPrice" in item_data:
+                price_dict = item_data["ItemPrice"]
+                item_total = Money(
+                    amount=Decimal(str(price_dict.get("Amount", "0.00"))),
+                    currency=price_dict.get("CurrencyCode", "EGP")
+                )
+            
+            items.append(OrderItem(
+                sku=item_data.get("SellerSKU", ""),
+                title=item_data.get("Title"),
+                quantity=int(item_data.get("QuantityOrdered", 1)),
+                unit_price=Money(
+                    amount=Decimal(str(item_data.get("ItemPrice", {}).get("Amount", "0.00"))),
+                    currency=item_data.get("ItemPrice", {}).get("CurrencyCode", "EGP")
+                ) if "ItemPrice" in item_data else Money(amount=Decimal("0.00"), currency="EGP"),
+                total=item_total or Money(amount=Decimal("0.00"), currency="EGP"),
+            ))
+        
+        # Create Order entity
+        order = Order(
+            order_id=OrderNumber(value=amazon_order_id),
+            purchase_date=purchase_date,
+            buyer_email=buyer_email or "",
+            items=items,
+            order_total=order_total,
+            order_status=order_status,
+            execution_id=execution_id,
+            marketplace="amazon",
+        )
 
         # Use OrderApplicationService to persist
         # Note: We need to convert domain entity back to DTO format for the service
@@ -108,12 +174,25 @@ class MarketplaceService:
         if not self._amazon_client:
             raise RuntimeError("Amazon client is not configured")
 
-        # Authenticate with Amazon
-        await self._amazon_client.authenticate()
-
-        # Fetch orders from Amazon
-        amazon_orders = await self._amazon_client.fetch_orders(
-            created_after=created_after, limit=limit
+        # Fetch orders from Amazon using SDK (sync method, wrap in executor)
+        import asyncio
+        from datetime import datetime, timedelta
+        
+        # Calculate created_before if not provided
+        if created_after:
+            created_after_dt = datetime.fromisoformat(created_after.replace("Z", "+00:00"))
+            created_before_dt = created_after_dt + timedelta(days=1)
+            created_before = created_before_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            created_before = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        loop = asyncio.get_event_loop()
+        amazon_orders = await loop.run_in_executor(
+            None,
+            lambda: self._amazon_client.get_orders(
+                created_after=created_after or "",
+                created_before=created_before
+            )
         )
 
         # Sync orders

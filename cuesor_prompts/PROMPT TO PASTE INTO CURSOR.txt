@@ -1,0 +1,114 @@
+You are an expert senior engineer working on the Konozy AI project with a strict SAFE-MODE approach.
+
+Your mission:
+----------------------------------------------
+Move ONLY the Amazon SP-API core modules from sandbox_amazon/ 
+into a new clean SDK folder called `konozy_sdk/amazon/`.
+This includes:
+
+1) client.py  
+2) orders.py  
+3) financial_source.py  
+
+Constraints / MUST FOLLOW:
+----------------------------------------------
+⚠ DO NOT modify existing working logic in core/ domain/ application/  
+⚠ DO NOT touch Odoo sync logic, bus, or orchestration code  
+⚠ DO NOT overwrite ANY file unless explicitly specified  
+⚠ Maintain imports without breaking the project  
+⚠ Ensure that the new SDK becomes the official import path:
+      from konozy_sdk.amazon import AmazonAPI
+
+Safe Steps (do them in this order):
+----------------------------------------------
+
+STEP 1 — Create SDK structure
+----------------------------------------------
+Create the following structure exactly:
+
+konozy_sdk/
+    __init__.py
+    amazon/
+        __init__.py
+        client.py
+        orders.py
+        financial_source.py
+    settings/
+        __init__.py
+    shared/
+        __init__.py
+
+
+STEP 2 — Copy files without modifying logic
+----------------------------------------------
+Copy the sandbox files:
+
+- sandbox_amazon/client.py          → konozy_sdk/amazon/client.py  
+- sandbox_amazon/orders.py          → konozy_sdk/amazon/orders.py  
+- sandbox_amazon/financial_source.py → konozy_sdk/amazon/financial_source.py  
+
+Keep ALL logic identical.  
+No refactoring.  
+No renaming.  
+No restructuring.
+
+STEP 3 — Fix imports safely
+----------------------------------------------
+Fix ONLY import paths that break due to relocation.
+
+Examples of allowed fixes:
+----------------------------------------------
+❌ from client import Foo
+✔ from konozy_sdk.amazon.client import Foo
+
+❌ from financial_source import AmazonFinancialSource
+✔ from konozy_sdk.amazon.financial_source import AmazonFinancialSource
+
+DO NOT modify functional logic or class internals.
+
+STEP 4 — Expose public API
+----------------------------------------------
+Inside konozy_sdk/amazon/__init__.py add:
+
+from .client import AmazonAPI
+from .orders import AmazonOrders
+from .financial_source import AmazonFinancialSource
+
+STEP 5 — DO NOT TOUCH:
+----------------------------------------------
+🚫 core/domain  
+🚫 core/infrastructure  
+🚫 settings of the project  
+🚫 odoo mappers  
+🚫 fee_mapper / fee_config  
+🚫 any business logic  
+🚫 any database logic  
+🚫 existing agent workflows  
+🚫 poetry / pyproject  
+
+STEP 6 — Self-check before writing files
+----------------------------------------------
+Before writing any file, perform:
+
+- A dependency check: ensure no circular import will happen  
+- A path check: confirm target folders exist  
+- A safety check: ensure that no existing file will be overwritten unless requested  
+
+STEP 7 — After applying changes
+----------------------------------------------
+Generate a summary:
+
+- Files created
+- Files copied
+- Imports updated
+- Commands I should run to test the SDK manually, e.g.:
+
+python3 - << 'EOF'
+from konozy_sdk.amazon import AmazonAPI
+api = AmazonAPI()
+print("SDK Loaded OK:", api)
+EOF
+
+Final rule:
+----------------------------------------------
+IF ANY ACTION WILL BREAK THE PROJECT → STOP AND ASK FOR CONFIRMATION.

@@ -1,3 +1,4 @@
-from .app import get_app_settings, AppSettings
+# Settings package
+from core.settings.modules import AppSettings, get_app_settings, IntegrationsSettings
 
-__all__ = ["get_app_settings", "AppSettings"]
+__all__ = ["get_app_settings", "AppSettings", "IntegrationsSettings"]

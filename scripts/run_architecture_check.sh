@@ -14,7 +14,7 @@ fi
 
 # 1. Domain Purity Check (AST-based)
 echo "Checking domain purity (AST analysis)..."
-python3 -c "
+python3 - <<'PY'
 import ast
 import sys
 from pathlib import Path

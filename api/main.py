@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 import logging
 import time
 
-from api.routes import amazon, orders, health
+from api.routes import amazon, orders, health, executions
 
 
 # Setup logging
@@ -147,6 +147,12 @@ app.include_router(
     orders.router,
     prefix="/api/v1/orders",
     tags=["Orders"]
+)
+
+app.include_router(
+    executions.router,
+    prefix="/api/v1",
+    tags=["Executions"]
 )
 
 

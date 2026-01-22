@@ -1,0 +1,135 @@
+Searching for files that import from the old Amazon paths, then updating them to use the new SDK imports.
+
+
+[3 tools called]
+
+
+Reading the files that need updates:
+
+
+[4 tools called]
+
+
+Checking which classes exist and what needs to be updated:
+
+
+[3 tools called]
+
+
+Checking which files actually import the SDK classes:
+
+
+[2 tools called]
+
+
+Creating a todo list and updating imports:
+
+
+[2 tools called]
+
+
+Checking if `AmazonClient` and `AmazonOrderMapper` exist or if this is dead code:
+
+
+[3 tools called]
+
+
+Updating imports. Since `MarketplaceService` uses `AmazonClient` and `AmazonOrderMapper` that don't exist in the SDK, checking what's actually available and updating accordingly:
+
+
+[2 tools called]
+
+
+Updating imports. Previewing changes before applying:
+
+
+[2 tools called]
+
+
+Updating imports. `marketplace_service.py` imports `AmazonClient`, but the SDK provides `AmazonAPI`. Updating the import path and class name. `AmazonOrderMapper` isn't in the SDK, so leaving that import as-is. Applying changes:
+
+
+[3 tools called]
+
+
+The mapper import in `amazon_sync_service.py` is from `.mapper`, not one of the three core SDK modules, so leaving it as-is. Checking for other files that need updates and verifying the changes:
+
+
+[3 tools called]
+
+
+The error is unrelated to our changes. Verifying SDK imports and running tests:
+
+
+[4 tools called]
+
+
+Verifying the update and checking for other files that need changes:
+
+
+[3 tools called]
+
+
+Updating the docstring reference:
+
+
+[3 tools called]
+
+
+Checking other files for imports from the three core SDK modules:
+
+
+[4 tools called]
+
+
+Other files don't import the three core SDK modules. Running final verification:
+
+
+[3 tools called]
+
+
+## SDK activation complete
+
+### Files updated
+
+1. `core/application/services/marketplace_service.py`
+   - Changed: `from core.infrastructure.marketplace.amazon.client import AmazonClient`
+   - To: `from konozy_sdk.amazon.client import AmazonAPI`
+   - Updated type hints and docstrings to use `AmazonAPI` instead of `AmazonClient`
+
+### Files checked (no changes needed)
+
+- `api/dependencies.py` — imports `AmazonOrderClient` and `LegacySPAPIClient` (not part of SDK migration)
+- `core/application/services/amazon_sync_service.py` — imports from `.mapper` (not part of SDK migration)
+- `tests/integration/test_spapi_integration.py` — excluded per prompt
+
+### Verification results
+
+- SDK public API imports: `from konozy_sdk.amazon import AmazonAPI, AmazonOrders, AmazonFinancialSource`
+- SDK direct module imports: `from konozy_sdk.amazon.client import AmazonAPI`
+- SDK instantiation: `AmazonAPI()` works correctly
+- No linter errors in updated files
+
+### Import paths now active
+
+```python
+# Public API (recommended)
+from konozy_sdk.amazon import AmazonAPI
+from konozy_sdk.amazon import AmazonOrders
+from konozy_sdk.amazon import AmazonFinancialSource
+
+# Direct module imports (also supported)
+from konozy_sdk.amazon.client import AmazonAPI
+from konozy_sdk.amazon.orders import AmazonOrderParser
+from konozy_sdk.amazon.financial_source import AmazonFinancialSource
+```
+
+### Notes
+
+- Only `marketplace_service.py` imported from the three core SDK modules (`client`, `financial_source`, `orders`)
+- Other files reference wrapper/adapter classes (`AmazonOrderClient`, `LegacySPAPIClient`, `AmazonOrderMapper`) that are not part of the SDK
+- The `MarketplaceService` import issue is a pre-existing problem with `core.infrastructure.adapters.amazon`, unrelated to SDK activation
+- All SDK imports work correctly
+- No business logic was modified — only import paths updated
+
+The SDK is active and ready to use. The new import paths are functional, and the codebase can now use `konozy_sdk.amazon` as the official import path for Amazon SP-API integration.

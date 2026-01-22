@@ -1,43 +1,58 @@
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+from core.settings.base_settings import KonozyBaseSettings
 
 
-class AmazonSettings(BaseSettings):
+class AmazonSettings(KonozyBaseSettings):
     """
-    Settings خاصة بتكامل أمازون.
-
-    مبدأ التصميم:
-    - كل فيلد اسمه مطابق تقريبًا لاسم المتغير في .env لكن بصيغة snake_case.
-    - BaseSettings هتقرأ المتغيرات من environment تلقائيًا:
-      FIELD_NAME -> ENV VAR NAME = FIELD_NAME.upper()
-      مثال:
-        amazon_account_id  -> AMAZON_ACCOUNT_ID
-        amazon_sales_id    -> AMAZON_SALES_ID
+    Amazon integration settings.
+    Loaded from .env file with exact variable name matching.
     """
 
-    model_config = SettingsConfigDict(
-        extra="ignore",
+    # API Credentials / Auth
+    seller_id: str = Field(..., alias="SELLER_ID")
+    refresh_token: str = Field(..., alias="REFRESH_TOKEN")
+
+    # LWA (Login with Amazon)
+    lwa_app_id: str = Field(..., alias="LWA_APP_ID")
+    lwa_client_secret: str = Field(..., alias="LWA_CLIENT_SECRET")
+
+    # AWS credentials for SigV4 signing
+    amazon_access_key: str = Field(..., alias="AMAZON_ACCESS_KEY")
+    amazon_secret_key: str = Field(..., alias="AMAZON_SECRET_KEY")
+
+    # STS AssumeRole (if used)
+    role_arn: str = Field(..., alias="ROLE_ARN")
+    role_session_name: str = Field(..., alias="ROLE_SESSION_NAME")
+
+    # Marketplace
+    marketplace: str = Field(..., alias="MARKETPLACE")
+
+    # Accounts & Fees
+    account_id: int = Field(..., alias="AMAZON_ACCOUNT_ID")
+    sales_id: int = Field(..., alias="AMAZON_SALES_ID")
+    amazon_partner_id: int = Field(..., alias="AMAZON_PARTNER_ID")
+    commissions_id: int = Field(..., alias="AMAZON_COMMISSIONS_ID")
+    fees_product_id: int = Field(..., alias="AMAZON_FEES_PRODUCT_ID")
+    promo_rebates_id: int = Field(..., alias="AMAZON_PROMO_REBATES_ID")
+    inventory_loss_id: int = Field(..., alias="INVENTORY_LOSS_DAMAGED_GOODS_ID")
+    fba_pick_pack_fee_id: int = Field(..., alias="AMAZON_FBA_PICK_PACK_FEE_ID")
+    cod_fee_id: int = Field(..., alias="AMAZON_COD_FEE_ID")
+    fba_fee_account_id: int = Field(..., alias="AMAZON_FBA_FEE_ACCOUNT_ID")
+
+    # Journal
+    journal_id: int = Field(..., alias="AMAZON_JOURNAL_ID")
+
+    # Analytics
+    analytic_sales_id: int = Field(..., alias="AMAZON_ANALYTIC_SALES_ID")
+    analytic_shipping_cost_id: int = Field(
+        ..., alias="AMAZON_ANALYTIC_SHIPPING_COST_ID"
+    )
+    analytic_commissions_id: int = Field(
+        ..., alias="AMAZON_ANALYTIC_COMMISSIONS_ID"
     )
 
-    # === Core Accounts / Partners / Warehouse ===
-    amazon_account_id: int = 1031          # AMAZON_ACCOUNT_ID
-    amazon_sales_id: int = 1075            # AMAZON_SALES_ID
-    amazon_partner_id: int = 19            # AMAZON_PARTNER_ID
-    amazon_warehouse_id: int = 2           # AMAZON_WAREHOUSE_ID
-    amazon_journal_id: int = 472           # AMAZON_JOURNAL_ID
-
-    # === Fees / Promo / Inventory Loss ===
-    amazon_commissions_id: int = 1133      # AMAZON_COMMISSIONS_ID
-    amazon_fees_product_id: int = 640      # AMAZON_FEES_PRODUCT_ID
-    amazon_promo_rebates_id: int = 1100    # AMAZON_PROMO_REBATES_ID
-    amazon_fba_fee_account: int = 1145     # Amazon_FBA_Fee_Account (مهم نعدّل اسمه في .env لاحقًا)
-    inventory_loss_damaged_goods_id: int = 1146  # INVENTORY_LOSS_DAMAGED_GOODS_ID
-
-    # === Analytic Accounts ===
-    amazon_analytic_sales_id: int = 2          # AMAZON_ANALYTIC_SALES_ID
-    amazon_commissions_analytic_id: int = 8    # AMAZON_COMMISSIONS_ANALYTIC_ID
-
-    # ملاحظة: في .env المتغير اسمه حاليًا "analytical_Amazon_shipping_cost_id" بصيغة غريبة.
-    # الأفضل توحيد الاسم إلى: ANALYTICAL_AMAZON_SHIPPING_COST_ID مستقبلاً.
-    analytical_amazon_shipping_cost_id: int = 43  # ANALYTICAL_AMAZON_SHIPPING_COST_ID
+    spapi_host: str = Field(..., alias="SPAPI_HOST")
+    spapi_region: str = Field(..., alias="SPAPI_REGION")

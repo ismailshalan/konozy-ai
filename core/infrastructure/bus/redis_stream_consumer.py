@@ -16,7 +16,6 @@ from core.application.interfaces import IOdooClient
 from core.domain.repositories import OrderRepository
 from core.domain.value_objects import OrderNumber, ExecutionID
 from core.infrastructure.adapters.odoo.odoo_financial_mapper import OdooFinancialMapper
-from core.infrastructure.adapters.amazon.fee_mapper import AmazonFeeMapper
 
 
 logger = logging.getLogger(__name__)
@@ -327,8 +326,8 @@ async def start_odoo_sync_worker(
     """
     # Import dependencies (avoid circular imports)
     if odoo_client is None:
-        from core.infrastructure.adapters.odoo.mock_odoo_client import MockOdooClient
-        odoo_client = MockOdooClient()
+        from apps.adapters.odoo.client import OdooClient
+        odoo_client = OdooClient()  # Real Odoo client
     
     if order_repository is None:
         from core.infrastructure.adapters.persistence.mock_order_repository import MockOrderRepository

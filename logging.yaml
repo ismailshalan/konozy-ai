@@ -1,0 +1,37 @@
+version: 1
+formatters:
+  standard:
+    format: "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+
+handlers:
+  api_handler:
+    class: logging.FileHandler
+    filename: api.log
+    level: INFO
+    formatter: standard
+
+  core_handler:
+    class: logging.FileHandler
+    filename: core.log
+    level: INFO
+    formatter: standard
+
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: standard
+
+loggers:
+  api:
+    handlers: [api_handler, console]
+    level: INFO
+    propagate: False
+
+  core:
+    handlers: [core_handler, console]
+    level: INFO
+    propagate: False
+
+root:
+  handlers: [console]
+  level: INFO

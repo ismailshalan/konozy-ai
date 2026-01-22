@@ -1,0 +1,42 @@
+Searching for test files with incorrect imports and fixing them.
+
+
+[2 tools called]
+
+
+Reading the files to fix the imports:
+
+
+[2 tools called]
+
+
+Fixing imports in both files:
+
+
+[2 tools called]
+
+
+Verifying fixes and checking for remaining incorrect imports:
+
+
+[3 tools called]
+
+
+Running pytest collection to verify the fixes:
+
+
+[1 tool called]
+
+
+**Files modified:**
+1. `tests/integration/test_executions_api.py` - Fixed import on line 18
+2. `tests/application/test_sync_order_event_flow.py` - Fixed import on line 26
+
+**Replacements made:** 2
+
+**Verification:**
+- No remaining incorrect imports from `core.infrastructure.database.config`
+- All imports now use `core.infrastructure.database.lifecycle`
+- Pytest collection passed: 45 tests collected, no ImportError
+
+**Result:** All import errors fixed. Tests are ready to run.
